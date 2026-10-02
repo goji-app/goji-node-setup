@@ -9,6 +9,8 @@
 #                            [--template random|analytics|blog|docs|saas]
 #                            [--skip-hardening] [--icmp-drop] [--ssh-port N]
 #                            [--allow-port 8443[/tcp|/udp]]...
+#                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
+#   bash install.sh --check | --resume | --version
 #
 # Reinstalls Remnawave Node (docker, /opt/remnanode) asking for SECRET_KEY etc.
 # Xray profile is managed by Remnawave: switch the node profile to the XHTTP one
@@ -16,6 +18,8 @@
 # to become free and then enables the TLS front.
 set -euo pipefail
 
+VERSION=1.1.0
+CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
 XRAY_PORT=10443
@@ -31,11 +35,125 @@ HARDEN=1
 ICMP_DROP=0
 SSH_PORT=""
 EXTRA_PORTS=()
+ADMIN_IPS=()
+GUARD_MODE=""
+GUARD_ON=0
+RESUME=0
+CHECK=0
 
 die()  { echo -e "\e[31m[x] $*\e[0m" >&2; exit 1; }
 info() { echo -e "\e[36m[*] $*\e[0m"; }
 ok()   { echo -e "\e[32m[+] $*\e[0m"; }
 warn() { echo -e "\e[33m[!] $*\e[0m"; }
+
+# ---------------------------------------------------------------- component report
+# Also installed as /usr/local/sbin/goji-node-check (see "declare -f" below).
+# Exit codes: 0 all good, 1 something is broken, 2 installed but the Xray profile is not active yet.
+gj_row() { # gj_row <status ok|warn|fail> <component> <detail>
+  local c=$'\e[32m✓\e[0m' w=$'\e[33m!\e[0m' f=$'\e[31m✗\e[0m' mark pad
+  case "$1" in ok) mark=$c ;; warn) mark=$w ;; *) mark=$f ;; esac
+  pad=$((34 - ${#2})); (( pad < 1 )) && pad=1
+  printf ' %s %s%*s %s\n' "$mark" "$2" "$pad" "" "$3"
+}
+
+goji_check() {
+  export LC_ALL=C.UTF-8
+  local CONF_FILE=/etc/goji-node/install.conf
+  [[ -r $CONF_FILE ]] || { echo "Нет сохранённой установки ($CONF_FILE). Сначала запустите install.sh." >&2; return 1; }
+  # shellcheck disable=SC1090
+  . "$CONF_FILE"
+  local fail=0 pending=0 live="/etc/letsencrypt/live/$GOJI_DOMAIN" v code end days
+  echo
+  echo "Проверка Goji node — $GOJI_DOMAIN"
+  echo "----------------------------------------------------------------"
+
+  if systemctl is-active --quiet nginx 2>/dev/null; then gj_row ok "nginx" "работает"; else gj_row fail "nginx" "не запущен"; fail=1; fi
+
+  if [[ -f $live/fullchain.pem ]]; then
+    end=$(openssl x509 -enddate -noout -in "$live/fullchain.pem" 2>/dev/null | cut -d= -f2)
+    days=$(( ( $(date -d "$end" +%s 2>/dev/null || echo 0) - $(date +%s) ) / 86400 ))
+    if (( days > 14 )); then gj_row ok "Сертификат Let's Encrypt" "действует ещё $days дн."
+    elif (( days > 0 )); then gj_row warn "Сертификат Let's Encrypt" "осталось $days дн. — проверьте продление"
+    else gj_row fail "Сертификат Let's Encrypt" "истёк или не читается"; fail=1; fi
+  else
+    gj_row fail "Сертификат Let's Encrypt" "файл не найден"; fail=1
+  fi
+  if grep -qs "authenticator = webroot" "/etc/letsencrypt/renewal/$GOJI_DOMAIN.conf"; then
+    gj_row ok "Продление сертификата" "webroot, certbot.timer: $(systemctl is-active certbot.timer 2>/dev/null || echo unknown)"
+  else
+    gj_row warn "Продление сертификата" "конфигурация webroot не найдена"
+  fi
+
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>/dev/null || true)
+  if [[ $code == 200 ]]; then gj_row ok "HTTPS :443, сайт-заглушка" "HTTP 200"; else gj_row fail "HTTPS :443, сайт-заглушка" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code")"; fail=1; fi
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/goji-check-nope" 2>/dev/null || true)
+  if [[ $code == 404 ]]; then gj_row ok "Неизвестный путь" "HTTP 404"; else gj_row warn "Неизвестный путь" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code"), ожидался 404"; fi
+
+  if ss -Hltn "sport = :$GOJI_XRAY_PORT" 2>/dev/null | grep -q .; then
+    gj_row ok "Xray XHTTP 127.0.0.1:$GOJI_XRAY_PORT" "слушает"
+  else
+    gj_row warn "Xray XHTTP 127.0.0.1:$GOJI_XRAY_PORT" "профиль в панели ещё не применён"; pending=1
+  fi
+
+  if [[ -n ${GOJI_NODE_PORT:-} ]]; then
+    if command -v docker >/dev/null && [[ "$(docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null)" == true ]]; then
+      v=$(docker inspect -f '{{.Config.Image}}' remnanode 2>/dev/null)
+      gj_row ok "Remnawave Node (docker)" "запущен, образ: ${v##*/}"
+    else
+      gj_row fail "Remnawave Node (docker)" "контейнер remnanode не запущен"; fail=1
+    fi
+    if ss -Hltn "sport = :$GOJI_NODE_PORT" 2>/dev/null | grep -q .; then gj_row ok "API ноды :$GOJI_NODE_PORT" "слушает"; else gj_row warn "API ноды :$GOJI_NODE_PORT" "порт не слушается"; fi
+  fi
+
+  if [[ ${GOJI_HARDEN:-1} -eq 1 ]]; then
+    if ufw status 2>/dev/null | grep -q "Status: active"; then gj_row ok "UFW" "включён, входящие закрыты по умолчанию"; else gj_row warn "UFW" "не включён"; fi
+    if fail2ban-client ping >/dev/null 2>&1; then gj_row ok "Fail2ban" "работает (sshd, recidive)"; else gj_row warn "Fail2ban" "не отвечает"; fi
+    v=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null); code=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    if [[ $v == bbr && $code == fq ]]; then gj_row ok "BBR + fq" "включены"; else gj_row warn "BBR + fq" "сейчас: ${v:-?} + ${code:-?}"; fi
+    if swapon --noheadings 2>/dev/null | grep -q zram; then gj_row ok "ZRAM" "swap на zram активен"; else gj_row warn "ZRAM" "не активен (контейнер или отключён)"; fi
+    if [[ -f /etc/ssh/sshd_config.d/00-goji-hardening.conf ]] && sshd -T 2>/dev/null | grep -qx "maxauthtries 4"; then
+      gj_row ok "SSH" "ограничения применены (способ входа не менялся)"
+    else
+      gj_row warn "SSH" "ограничения не применены"
+    fi
+    if nft list table inet goji_privacy >/dev/null 2>&1; then
+      gj_row ok "Защита от ping" "echo-request: $(grep -qs 'MODE=drop' /etc/default/goji-two-way-ping && echo блок || echo 'лимит 5/с'), timestamp: блок"
+    else
+      gj_row warn "Защита от ping" "правила nftables не загружены"
+    fi
+    if [[ ${GOJI_GUARD:-0} -eq 1 ]]; then
+      if nft list table inet goji_guard >/dev/null 2>&1; then gj_row ok "Traffic Control" "списки применены (goji-guard status)"; else gj_row warn "Traffic Control" "таблица не загружена (goji-guard update)"; fi
+    else
+      gj_row warn "Traffic Control" "не устанавливался (--traffic-control)"
+    fi
+  else
+    gj_row warn "Усиление защиты" "пропущено (--skip-hardening)"
+  fi
+  echo "----------------------------------------------------------------"
+  if (( fail )); then echo "Итог: есть ошибки."; return 1; fi
+  if (( pending )); then echo "Итог: всё установлено, ожидается применение профиля XHTTP в Remnawave."; return 2; fi
+  echo "Итог: всё в порядке."
+  return 0
+}
+
+# ---------------------------------------------------------------- resume / saved configuration
+for a in "$@"; do
+  case "$a" in
+    --version) echo "goji-node-setup $VERSION"; exit 0 ;;
+    --resume)  RESUME=1 ;;
+    --check)   CHECK=1 ;;
+  esac
+done
+if [[ $RESUME -eq 1 ]]; then
+  [[ -r $CONF_FILE ]] || die "--resume: no saved installation ($CONF_FILE); run install.sh normally first"
+  # shellcheck disable=SC1090
+  . "$CONF_FILE"
+  DOMAIN=${GOJI_DOMAIN:-}; EMAIL=${GOJI_EMAIL:-}; XRAY_PORT=${GOJI_XRAY_PORT:-$XRAY_PORT}; XPATH=${GOJI_XPATH:-$XPATH}
+  NODE_PORT=${GOJI_NODE_PORT:-}; PANEL_IP=${GOJI_PANEL_IP:-}; SSH_PORT=${GOJI_SSH_PORT:-}
+  SKIP_NODE=${GOJI_SKIP_NODE:-0}; HARDEN=${GOJI_HARDEN:-1}; ICMP_DROP=${GOJI_ICMP_DROP:-0}; GUARD_MODE=${GOJI_GUARD:-0}
+  read -ra ADMIN_IPS <<< "${GOJI_ADMIN_IPS:-}"
+  read -ra EXTRA_PORTS <<< "${GOJI_EXTRA_PORTS:-}"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,15 +170,49 @@ while [[ $# -gt 0 ]]; do
     --icmp-drop) ICMP_DROP=1; shift ;;
     --ssh-port)  SSH_PORT="$2"; shift 2 ;;
     --allow-port) EXTRA_PORTS+=("$2"); shift 2 ;;
-    -h|--help)   sed -n '2,17p' "$0"; exit 0 ;;
+    --admin-ip)  ADMIN_IPS+=("$2"); shift 2 ;;
+    --traffic-control)    GUARD_MODE=1; shift ;;
+    --no-traffic-control) GUARD_MODE=0; shift ;;
+    --resume|--check) shift ;;
+    -h|--help)   sed -n '2,18p' "$0"; exit 0 ;;
     -*)          die "unknown option: $1" ;;
     *)           DOMAIN="$1"; shift ;;
   esac
 done
 
 [[ $EUID -eq 0 ]] || die "run as root"
+if [[ $CHECK -eq 1 ]]; then rc=0; goji_check || rc=$?; exit $rc; fi
 command -v apt-get >/dev/null || die "only Debian/Ubuntu (apt) is supported"
 [[ "$XPATH" == /*/ ]] || die "--path must start and end with '/'"
+
+# ---------------------------------------------------------------- lock, signals, preflight
+exec 9>/run/goji-node-setup.lock
+flock -n 9 || die "another goji-node-setup is already running"
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+preflight() {
+  [[ -d /run/systemd/system ]] || die "systemd is required"
+  local id="" ver=""
+  if [[ -r /etc/os-release ]]; then id=$(. /etc/os-release; echo "${ID:-}"); ver=$(. /etc/os-release; echo "${VERSION_ID:-}"); fi
+  case "$id:$ver" in
+    debian:12|debian:13|ubuntu:22.04|ubuntu:24.04) ;;
+    *) warn "untested OS '$id $ver' (supported: Debian 12/13, Ubuntu 22.04/24.04) — continuing" ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|aarch64) ;;
+    *) warn "untested architecture $(uname -m)" ;;
+  esac
+  local free_kb
+  free_kb=$(df -Pk / | awk 'NR==2{print $4}')
+  [[ ${free_kb:-0} -ge 1048576 ]] || die "less than 1 GiB free on / — free some space first"
+  if command -v ss >/dev/null && ss -Hltnp 'sport = :80' | grep -q . && ! ss -Hltnp 'sport = :80' | grep -q nginx; then
+    die "port 80 is used by another service ($(ss -Hltnp 'sport = :80' | head -1 | grep -o 'users:.*' | head -1)); certbot and the redirect need it"
+  fi
+  command -v sshd >/dev/null || warn "sshd not found — SSH hardening will be skipped"
+  [[ -n "${SSH_CONNECTION:-}" ]] || warn "not an SSH session — keep a console open until the install finishes"
+}
+preflight
 
 WEBROOT=/var/www/decoy
 ACME=/var/www/acme
@@ -96,6 +248,7 @@ if [[ -f "$NODE_DIR/docker-compose.yml" ]]; then
 fi
 
 if [[ $SKIP_NODE -eq 0 ]]; then
+  if [[ -z "$SECRET_KEY" && $RESUME -eq 1 && -n "$OLD_KEY" ]]; then SECRET_KEY="$OLD_KEY"; fi
   if [[ -z "$SECRET_KEY" ]]; then
     echo "Remnawave Node will be reinstalled in $NODE_DIR."
     echo "SECRET_KEY: Panel -> Nodes -> (this node) -> copy key from docker-compose."
@@ -109,15 +262,67 @@ if [[ $SKIP_NODE -eq 0 ]]; then
   [[ -n "$SECRET_KEY" ]] || die "SECRET_KEY is empty"
   [[ -n "$NODE_PORT" ]] || ask NODE_PORT "NODE_PORT (panel -> node API)" "${OLD_PORT:-2222}"
   [[ "$NODE_PORT" =~ ^[0-9]+$ ]] || die "NODE_PORT must be a number"
-  [[ -n "$PANEL_IP" ]] || ask PANEL_IP "Panel IP to allow on NODE_PORT (Enter = skip firewall rule)" ""
-  if [[ -z "$EMAIL" ]]; then ask EMAIL "E-mail for Let's Encrypt (Enter = none)" ""; fi
+  [[ -n "$PANEL_IP" || $RESUME -eq 1 ]] || ask PANEL_IP "Panel IP to allow on NODE_PORT (Enter = skip firewall rule)" ""
+  if [[ -z "$EMAIL" && $RESUME -eq 0 ]]; then ask EMAIL "E-mail for Let's Encrypt (Enter = none)" ""; fi
+fi
+
+# Traffic Control (blocklists of scanner networks) is opt-in.
+if [[ $HARDEN -eq 1 ]]; then
+  if [[ -z "$GUARD_MODE" ]]; then
+    GUARD_MODE=0
+    if [[ -r /dev/tty ]]; then
+      read -r -p "Install Traffic Control (daily-updated blocklists of scanner networks, admin/panel/SSH are exempt)? [y/N]: " __g </dev/tty || true
+      [[ "${__g:-}" =~ ^[yYдД] ]] && GUARD_MODE=1
+    fi
+  fi
+  GUARD_ON=$GUARD_MODE
+fi
+
+save_conf() {
+  mkdir -p /etc/goji-node
+  {
+    echo "# Managed by goji-node-setup $VERSION"
+    printf 'GOJI_VERSION=%q\n' "$VERSION"
+    printf 'GOJI_DOMAIN=%q\n' "$DOMAIN"
+    printf 'GOJI_EMAIL=%q\n' "$EMAIL"
+    printf 'GOJI_XRAY_PORT=%q\n' "$XRAY_PORT"
+    printf 'GOJI_XPATH=%q\n' "$XPATH"
+    printf 'GOJI_NODE_PORT=%q\n' "$NODE_PORT"
+    printf 'GOJI_PANEL_IP=%q\n' "$PANEL_IP"
+    printf 'GOJI_SSH_PORT=%q\n' "$SSH_PORT"
+    printf 'GOJI_SKIP_NODE=%q\n' "$SKIP_NODE"
+    printf 'GOJI_HARDEN=%q\n' "$HARDEN"
+    printf 'GOJI_ICMP_DROP=%q\n' "$ICMP_DROP"
+    printf 'GOJI_GUARD=%q\n' "$GUARD_ON"
+    printf 'GOJI_ADMIN_IPS=%q\n' "${ADMIN_IPS[*]:-}"
+    printf 'GOJI_EXTRA_PORTS=%q\n' "${EXTRA_PORTS[*]:-}"
+  } > "$CONF_FILE.tmp"
+  chmod 600 "$CONF_FILE.tmp"
+  mv -f "$CONF_FILE.tmp" "$CONF_FILE"
+}
+save_conf
+
+# --resume: do not reinstall a node that is already running with the saved settings
+if [[ $RESUME -eq 1 && $SKIP_NODE -eq 0 ]] && command -v docker >/dev/null \
+   && [[ "$(docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null)" == true ]]; then
+  info "resume: Remnawave Node is already running — not reinstalling it"
+  SKIP_NODE=1
 fi
 
 # ---------------------------------------------------------------- packages
 info "Installing nginx and certbot"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq nginx certbot curl ca-certificates iproute2 >/dev/null
+# nftables is installed before any firewall rule exists: its postinst may load the packaged
+# /etc/nftables.conf ("flush ruleset"), which would wipe ufw/docker rules loaded earlier.
+# We only need the nft binary, so a freshly installed nftables.service is disabled.
+pkgs=(nginx certbot curl ca-certificates iproute2)
+NFT_PREINSTALLED=0; command -v nft >/dev/null && NFT_PREINSTALLED=1
+[[ $HARDEN -eq 1 ]] && pkgs+=(nftables)
+apt-get install -y -qq "${pkgs[@]}" >/dev/null
+if [[ $HARDEN -eq 1 && $NFT_PREINSTALLED -eq 0 ]]; then
+  systemctl disable nftables.service >/dev/null 2>&1 || true
+fi
 ok "nginx $(nginx -v 2>&1 | sed 's#.*/##')"
 
 # ---------------------------------------------------------------- DNS sanity
@@ -315,7 +520,6 @@ if ! ss -Hltn "sport = :1080" | grep -q .; then
 fi
 
 # ---------------------------------------------------------------- hardening & tuning
-# ---------------------------------------------------------------- hardening & tuning
 # UFW, Fail2ban, ZRAM, BBR + fq, tc (fq on the uplink), sysctl tuning and
 # rate-limiting of incoming ICMP echo. Every step is best-effort: a failure prints
 # a warning and never aborts the node install. Skip with --skip-hardening.
@@ -344,6 +548,8 @@ harden_system() {
       ssh_ports=(22)
     fi
   fi
+
+  SSH_PORTS_DETECTED="${ssh_ports[*]}"
 
   # ---- sysctl: BBR + fq, socket buffers, backlog, basic anti-spoofing
   local SYSCTL=/etc/sysctl.d/99-goji-tuning.conf bbr_ok=0
@@ -524,26 +730,6 @@ EOF
       ufw allow "$port/$proto" >/dev/null && info "ufw: keeping $port/$proto (listened by xray)"
     done < <(ss -Hltunp 2>/dev/null | awk '$5 !~ /^(127\.|\[::1\]|::1)/ && /xray|rw-core/ {n=split($5,a,":"); print $1, a[n]}' | sort -u)
 
-    # ICMP echo-request: rate-limited by default, dropped with --icmp-drop.
-    # Other ICMP (destination-unreachable, time-exceeded, ICMPv6 ND) stays untouched,
-    # so Path MTU Discovery and IPv6 keep working.
-    local rf
-    for rf in /etc/ufw/before.rules /etc/ufw/before6.rules; do
-      [[ -f "$rf" ]] || continue
-      [[ -f "$rf.goji-bak" ]] || cp -p "$rf" "$rf.goji-bak"
-      sed -i '/--comment goji-icmp/d' "$rf"
-      local chain=ufw-before-input itype="icmp --icmp-type echo-request"
-      if [[ "$rf" == *6.rules ]]; then chain=ufw6-before-input; itype="icmpv6 --icmpv6-type echo-request"; fi
-      local pat="^-A $chain -p $itype -j ACCEPT\$"
-      local drop="-A $chain -p $itype -m comment --comment goji-icmp -j DROP"
-      local lim="-A $chain -p $itype -m limit --limit 5/second --limit-burst 10 -m comment --comment goji-icmp -j ACCEPT"
-      if [[ $ICMP_DROP -eq 1 ]]; then
-        sed -i "/$pat/i\\$drop" "$rf"
-      else
-        sed -i -e "/$pat/i\\$lim" -e "/$pat/i\\$drop" "$rf"
-      fi
-    done
-
     if [[ $was_active -eq 1 ]]; then
       ufw reload >/dev/null || warn "ufw reload failed — check /etc/ufw/before.rules"
     else
@@ -551,7 +737,6 @@ EOF
     fi
     if ufw status | grep -q "Status: active"; then
       ok "ufw active (ssh: ${ssh_ports[*]}, 80, 443$([[ -n "$np" ]] && echo ", $np"))"
-      [[ $ICMP_DROP -eq 1 ]] && ok "ICMP echo-request: dropped" || ok "ICMP echo-request: limited to 5/s"
     fi
   fi
 
@@ -596,11 +781,556 @@ EOF
   fi
 }
 
+# ---------------------------------------------------------------- SSH hardening (with rollback)
+# Only connection limits are tightened. Authentication methods, root login and
+# AllowTcpForwarding keep their effective values; if sshd -T shows any change in
+# them, or sshd rejects the file, the previous state is restored.
+ssh_rollback() { # ssh_rollback <dropin> <had_dropin> <backup dir>
+  local dropin="$1" had="$2" bk="$3" tmp
+  if [[ $had -eq 1 ]]; then
+    tmp=$(mktemp /etc/ssh/sshd_config.d/.goji-restore-XXXXXX)
+    cp -p "$bk/sshd-dropin-before.conf" "$tmp" && mv -f "$tmp" "$dropin" || rm -f "$tmp"
+  else
+    rm -f "$dropin"
+  fi
+  sshd -t 2>/dev/null || true
+  local u
+  for u in ssh.service sshd.service; do
+    systemctl is-active --quiet "$u" && systemctl try-reload-or-restart "$u" >/dev/null 2>&1 && break
+  done
+  warn "SSH hardening rolled back — previous configuration restored"
+}
+
+harden_ssh() {
+  local dropin=/etc/ssh/sshd_config.d/00-goji-hardening.conf bk=/var/backups/goji-node had=0 tmp bad=0 kv k u
+  command -v sshd >/dev/null || { warn "sshd not found — SSH hardening skipped"; return 0; }
+  if ! grep -qsE '^[[:space:]]*Include[[:space:]]+.*sshd_config\.d' /etc/ssh/sshd_config; then
+    warn "sshd_config has no Include for sshd_config.d — SSH hardening skipped"; return 0
+  fi
+  [[ ! -L $dropin ]] || { warn "$dropin is a symlink — SSH hardening skipped"; return 0; }
+  mkdir -p /run/sshd "$bk" /etc/ssh/sshd_config.d; chmod 700 "$bk"
+  sshd -t 2>/dev/null || { warn "current sshd configuration is invalid — SSH hardening skipped"; return 0; }
+  sshd -T > "$bk/sshd-before.txt" 2>/dev/null || { warn "sshd -T failed — SSH hardening skipped"; return 0; }
+  if [[ -f $dropin ]]; then cp -p "$dropin" "$bk/sshd-dropin-before.conf"; had=1; fi
+
+  tmp=$(mktemp /etc/ssh/sshd_config.d/.goji-XXXXXX)
+  cat > "$tmp" <<'CONF'
+# Managed by goji-node-setup. Authentication methods, root login and
+# AllowTcpForwarding are intentionally left untouched.
+MaxAuthTries 4
+LoginGraceTime 30
+AllowAgentForwarding no
+PermitTunnel no
+X11Forwarding no
+GatewayPorts no
+CONF
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$dropin"
+
+  if ! sshd -t 2>/dev/null; then ssh_rollback "$dropin" "$had" "$bk"; return 0; fi
+  sshd -T > "$bk/sshd-after.txt"
+  for kv in "maxauthtries 4" "logingracetime 30" "allowagentforwarding no" "permittunnel no" "x11forwarding no" "gatewayports no"; do
+    grep -qx "$kv" "$bk/sshd-after.txt" || { bad=1; warn "effective sshd setting differs from '$kv' (an earlier rule wins)"; }
+  done
+  for k in port allowtcpforwarding passwordauthentication pubkeyauthentication permitrootlogin kbdinteractiveauthentication authenticationmethods; do
+    if [[ "$(grep -E "^$k " "$bk/sshd-before.txt" || true)" != "$(grep -E "^$k " "$bk/sshd-after.txt" || true)" ]]; then
+      bad=1; warn "SSH setting '$k' would change"
+    fi
+  done
+  if [[ $bad -eq 1 ]]; then ssh_rollback "$dropin" "$had" "$bk"; return 0; fi
+
+  for u in ssh.service sshd.service; do
+    if systemctl is-active --quiet "$u"; then
+      systemctl try-reload-or-restart "$u" >/dev/null 2>&1 || { ssh_rollback "$dropin" "$had" "$bk"; return 0; }
+      break
+    fi
+  done
+  ok "SSH: MaxAuthTries 4, LoginGraceTime 30, no agent/tunnel/X11 forwarding (login method unchanged)"
+}
+
+# ---------------------------------------------------------------- ping protection (nftables)
+# Early nftables layer (priority -300, loaded before network-pre.target): incoming
+# ICMP echo-request is rate-limited (default) or dropped (--icmp-drop), ICMP
+# timestamp-request is dropped. Outgoing ping, ICMP errors, PMTUD and IPv6
+# neighbour discovery are not touched.
+harden_ping() {
+  local mode=limit
+  [[ $ICMP_DROP -eq 1 ]] && mode=drop
+  # older versions of this installer put the rules into ufw before*.rules: migrate
+  local rf
+  for rf in /etc/ufw/before.rules /etc/ufw/before6.rules; do
+    [[ -f $rf ]] && grep -q -- '--comment goji-icmp' "$rf" && sed -i '/--comment goji-icmp/d' "$rf"
+  done
+  if ! command -v nft >/dev/null; then
+    apt-get install -y -qq nftables >/dev/null 2>&1 || { warn "could not install nftables — ping protection skipped"; return 0; }
+  fi
+  printf '# Managed by goji-node-setup\nMODE=%s\n' "$mode" > /etc/default/goji-two-way-ping
+  cat > /usr/local/sbin/goji-two-way-ping.sh <<'SH'
+#!/usr/bin/env bash
+# goji-two-way-ping: early nftables layer against incoming ping / ICMP timestamp probes.
+set -euo pipefail
+TABLE=goji_privacy
+MODE=limit
+[[ -r /etc/default/goji-two-way-ping ]] && . /etc/default/goji-two-way-ping
+rules() {
+  echo "add table inet $TABLE"
+  echo "delete table inet $TABLE"
+  echo "table inet $TABLE {"
+  echo "  chain input {"
+  echo "    type filter hook input priority -300; policy accept;"
+  echo '    iifname "lo" accept'
+  echo "    icmp type timestamp-request drop"
+  if [[ $MODE == limit ]]; then
+    echo "    icmp type echo-request limit rate 5/second burst 10 packets accept"
+    echo "    icmpv6 type echo-request limit rate 5/second burst 10 packets accept"
+  fi
+  echo "    icmp type echo-request drop"
+  echo "    icmpv6 type echo-request drop"
+  echo "  }"
+  echo "}"
+}
+case "${1:-status}" in
+  start|restart|reload) rules | nft -f - ;;
+  stop)    nft delete table inet "$TABLE" 2>/dev/null || true ;;
+  rules)   rules ;;
+  status)  nft list table inet "$TABLE" ;;
+  *) echo "usage: $0 start|stop|restart|status|rules" >&2; exit 2 ;;
+esac
+SH
+  chmod 755 /usr/local/sbin/goji-two-way-ping.sh
+  cat > /etc/systemd/system/goji-two-way-ping.service <<'UNIT'
+[Unit]
+Description=Goji: block incoming ping and ICMP timestamp probes
+DefaultDependencies=no
+After=local-fs.target systemd-modules-load.service nftables.service ufw.service
+Before=network-pre.target shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/goji-two-way-ping.sh start
+ExecReload=/usr/local/sbin/goji-two-way-ping.sh restart
+ExecStop=/usr/local/sbin/goji-two-way-ping.sh stop
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable goji-two-way-ping.service >/dev/null 2>&1 || true
+  if systemctl restart goji-two-way-ping.service 2>/dev/null && nft list table inet goji_privacy >/dev/null 2>&1; then
+    ok "ping protection active (echo-request: $([[ $mode == drop ]] && echo dropped || echo 'limited to 5/s'), timestamp: dropped)"
+  else
+    systemctl disable goji-two-way-ping.service >/dev/null 2>&1 || true
+    warn "ping protection could not be loaded (container without nftables?) — see: journalctl -u goji-two-way-ping"
+  fi
+}
+
+# ---------------------------------------------------------------- Traffic Control (opt-in)
+harden_guard() {
+  if ! command -v nft >/dev/null; then
+    apt-get install -y -qq nftables >/dev/null 2>&1 || { warn "could not install nftables — Traffic Control skipped"; return 0; }
+  fi
+  command -v python3 >/dev/null || apt-get install -y -qq python3-minimal >/dev/null 2>&1 || { warn "python3 is missing — Traffic Control skipped"; return 0; }
+  local ssh_csv="${SSH_PORTS_DETECTED:-}" admin="" ip
+  if [[ -z "$ssh_csv" ]]; then
+    ssh_csv="${SSH_PORT:-$(sshd -T 2>/dev/null | awk '$1=="port"{printf "%s ", $2}')}"
+    ssh_csv="${ssh_csv% }"; ssh_csv="${ssh_csv:-22}"
+  fi
+  # administrator = the address of the current SSH session, plus any --admin-ip
+  [[ -n "${SSH_CONNECTION:-}" ]] && admin="${SSH_CONNECTION%% *}"
+  for ip in "${ADMIN_IPS[@]}"; do admin="$admin $ip"; done
+  admin="${admin# }"
+  [[ -n "$admin" ]] || warn "no administrator IP detected (not an SSH session) — pass --admin-ip; SSH port stays open for everyone"
+  mkdir -p /etc/goji-guard /var/lib/goji-guard /usr/local/sbin
+  printf '# Managed by goji-node-setup; edit and run: goji-guard apply\nENABLED="1"\nADMIN_IPS="%s"\nPANEL_IPS="%s"\nSSH_PORTS="%s"\nEXEMPT_PORTS="80"\n' \
+    "$admin" "$PANEL_IP" "$ssh_csv" > /etc/goji-guard/config
+  cat > /usr/local/sbin/goji-guard <<'PYEOF'
+#!/usr/bin/env python3
+"""goji-guard - host ingress blocklist for goji-node-setup (nftables table inet goji_guard).
+
+Downloads public scanner lists, validates them, and drops new inbound packets
+from listed networks. Administrator, panel, SSH and exempt ports are never
+blocked. Commands: status | update | apply | on | off | check
+"""
+import ipaddress
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+CONF = "/etc/goji-guard/config"
+STATE = "/var/lib/goji-guard"
+TABLE = "goji_guard"
+BASE = "https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/"
+LISTS = ("antiscanner", "government_networks", "skipa")
+MAX_BYTES = 8 * 1024 * 1024
+MAX_ENTRIES = 150000
+MAX_BAD_RATIO = 0.05
+MIN_V4_PREFIX = 8     # a list may never contain something broader than a /8 ...
+MIN_V6_PREFIX = 16    # ... or an IPv6 /16: that would cut off half the internet
+
+
+def load_conf():
+    conf = {"ENABLED": "1", "ADMIN_IPS": "", "PANEL_IPS": "", "SSH_PORTS": "22", "EXEMPT_PORTS": "80"}
+    try:
+        with open(CONF, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    conf[k.strip()] = v.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    return conf
+
+
+def write_conf_value(key, value):
+    lines, found = [], False
+    try:
+        with open(CONF, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except FileNotFoundError:
+        pass
+    for i, line in enumerate(lines):
+        if line.split("=", 1)[0].strip() == key:
+            lines[i] = f'{key}="{value}"'
+            found = True
+    if not found:
+        lines.append(f'{key}="{value}"')
+    atomic_write(CONF, "\n".join(lines) + "\n", 0o644)
+
+
+def atomic_write(path, text, mode=0o644):
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def parse_list(text):
+    """Return (networks, bad_lines, nonblank_lines). Raises ValueError on suspicious content."""
+    nets, bad, total = [], 0, 0
+    for raw in text.splitlines():
+        s = raw.split("#", 1)[0].strip()
+        if not s:
+            continue
+        total += 1
+        try:
+            n = ipaddress.ip_network(s, strict=False)
+        except ValueError:
+            bad += 1
+            continue
+        if n.version == 4 and n.prefixlen < MIN_V4_PREFIX or n.version == 6 and n.prefixlen < MIN_V6_PREFIX:
+            raise ValueError(f"suspiciously broad network {n}")
+        # never block local / private / special ranges: provider gateways, DNS, metadata
+        if n.is_private or n.is_loopback or n.is_link_local or n.is_multicast or n.is_reserved or n.is_unspecified:
+            continue
+        nets.append(n)
+    return nets, bad, total
+
+
+def fetch(name):
+    class HttpsOnly(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not newurl.startswith("https://"):
+                raise urllib.error.URLError("redirect to non-https URL refused")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    opener = urllib.request.build_opener(HttpsOnly)
+    req = urllib.request.Request(BASE + name + ".list", headers={"User-Agent": "goji-guard/1"})
+    with opener.open(req, timeout=60) as resp:
+        raw = resp.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise ValueError("list is larger than the size limit")
+    return raw.decode("utf-8", "strict")
+
+
+def cache_path(name):
+    return os.path.join(STATE, name + ".list")
+
+
+def update_lists():
+    ok = 0
+    for name in LISTS:
+        try:
+            nets, bad, total = parse_list(fetch(name))
+            if not nets:
+                raise ValueError("no valid networks")
+            if total and bad / total > MAX_BAD_RATIO:
+                raise ValueError(f"{bad} of {total} lines are not IP/CIDR")
+            if len(nets) > MAX_ENTRIES:
+                raise ValueError(f"{len(nets)} entries exceed the limit")
+            atomic_write(cache_path(name), "\n".join(str(n) for n in nets) + "\n")
+            print(f"[+] {name}: {len(nets)} networks")
+            ok += 1
+        except Exception as exc:  # network errors, bad data - keep the previous copy
+            have = os.path.exists(cache_path(name))
+            print(f"[!] {name}: {exc}; " + ("keeping the previous copy" if have else "no cached copy"), file=sys.stderr)
+    return ok
+
+
+def read_cached():
+    v4, v6, used = [], [], 0
+    for name in LISTS:
+        try:
+            with open(cache_path(name), encoding="utf-8") as fh:
+                nets, _, _ = parse_list(fh.read())
+        except (FileNotFoundError, ValueError):
+            continue
+        used += 1
+        for n in nets:
+            (v4 if n.version == 4 else v6).append(n)
+    if len(v4) + len(v6) > MAX_ENTRIES * len(LISTS):
+        raise ValueError("cached lists exceed the limit")
+    return ipaddress.collapse_addresses(v4), ipaddress.collapse_addresses(v6), used
+
+
+def split_allow(conf):
+    a4, a6 = [], []
+    for token in (conf["ADMIN_IPS"] + " " + conf["PANEL_IPS"]).replace(",", " ").split():
+        n = ipaddress.ip_network(token, strict=False)
+        (a4 if n.version == 4 else a6).append(n)
+    return a4, a6
+
+
+def ports(value):
+    out = []
+    for p in value.replace(",", " ").split():
+        if not (p.isdigit() and 0 < int(p) < 65536):
+            raise ValueError(f"bad port '{p}'")
+        out.append(p)
+    return out
+
+
+def build_ruleset(conf):
+    v4, v6, used = read_cached()
+    v4, v6 = list(v4), list(v6)
+    if used == 0:
+        raise ValueError("no cached lists; run: goji-guard update")
+    a4, a6 = split_allow(conf)
+    skip = ports(conf["SSH_PORTS"]) + ports(conf["EXEMPT_PORTS"])
+
+    def elems(items):
+        return ("elements = { " + ", ".join(str(i) for i in items) + " }") if items else ""
+
+    out = [
+        f"add table inet {TABLE}",
+        f"delete table inet {TABLE}",
+        f"table inet {TABLE} {{",
+        f"  set allow4 {{ type ipv4_addr; flags interval; {elems(a4)} }}",
+        f"  set allow6 {{ type ipv6_addr; flags interval; {elems(a6)} }}",
+        f"  set block4 {{ type ipv4_addr; flags interval; {elems(v4)} }}",
+        f"  set block6 {{ type ipv6_addr; flags interval; {elems(v6)} }}",
+        "  chain input {",
+        "    type filter hook input priority -150; policy accept;",
+        '    iifname "lo" accept',
+        "    ct state established,related accept",
+        "    ip saddr @allow4 accept",
+        "    ip6 saddr @allow6 accept",
+    ]
+    if skip:
+        out.append("    tcp dport { " + ", ".join(skip) + " } accept")
+    out += [
+        "    ip saddr @block4 counter drop",
+        "    ip6 saddr @block6 counter drop",
+        "  }",
+        "}",
+        "",
+    ]
+    return "\n".join(out), len(v4), len(v6)
+
+
+def nft(*args, stdin=None):
+    return subprocess.run(["nft", *args], input=stdin, text=True, capture_output=True)
+
+
+def remove_table():
+    nft("delete", "table", "inet", TABLE)
+
+
+def apply():
+    conf = load_conf()
+    if conf["ENABLED"] != "1":
+        remove_table()
+        print("[*] Traffic Control is switched off")
+        return 0
+    try:
+        text, n4, n6 = build_ruleset(conf)
+    except ValueError as exc:
+        print(f"[x] {exc}", file=sys.stderr)
+        return 1
+    fd, tmp = tempfile.mkstemp(prefix="goji-guard-", suffix=".nft")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        chk = nft("-c", "-f", tmp)
+        if chk.returncode != 0:
+            print("[x] nft rejected the ruleset, the previous rules stay:\n" + chk.stderr, file=sys.stderr)
+            return 1
+        res = nft("-f", tmp)
+        if res.returncode != 0:
+            print("[x] could not load the ruleset:\n" + res.stderr, file=sys.stderr)
+            return 1
+    finally:
+        os.unlink(tmp)
+    print(f"[+] Traffic Control active: {n4} IPv4 and {n6} IPv6 networks blocked")
+    return 0
+
+
+def table_text():
+    r = nft("list", "table", "inet", TABLE)
+    return r.stdout if r.returncode == 0 else None
+
+
+def status():
+    conf = load_conf()
+    txt = table_text()
+    print(f"enabled in config : {'yes' if conf['ENABLED'] == '1' else 'no'}")
+    print(f"nftables table    : {'loaded' if txt else 'not loaded'}")
+    for name in LISTS:
+        p = cache_path(name)
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as fh:
+                n = sum(1 for _ in fh)
+            age = int((time.time() - os.path.getmtime(p)) / 3600)
+            print(f"{name:<20}: {n} networks, updated {age} h ago")
+        else:
+            print(f"{name:<20}: no cached copy")
+    print(f"exempt            : admin/panel [{conf['ADMIN_IPS']} {conf['PANEL_IPS']}], tcp ports {conf['SSH_PORTS']} {conf['EXEMPT_PORTS']}")
+    if txt:
+        pk = [int(x.split()[1]) for x in txt.replace("\n", " ").split("counter ")[1:] if x.split()[0] == "packets"]
+        print(f"dropped packets   : {sum(pk)}")
+    return 0
+
+
+def check():
+    conf = load_conf()
+    if conf["ENABLED"] != "1":
+        print("off")
+        return 0
+    txt = table_text()
+    if not txt:
+        print("table is not loaded", file=sys.stderr)
+        return 1
+    print("ok")
+    return 0
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if os.geteuid() != 0:
+        print("run as root", file=sys.stderr)
+        return 1
+    if cmd == "status":
+        return status()
+    if cmd == "update":
+        os.makedirs(STATE, mode=0o755, exist_ok=True)
+        got = update_lists()
+        if got == 0 and not any(os.path.exists(cache_path(n)) for n in LISTS):
+            print("[x] no list could be downloaded", file=sys.stderr)
+            return 1
+        return apply()
+    if cmd == "apply":
+        return apply()
+    if cmd in ("on", "off"):
+        write_conf_value("ENABLED", "1" if cmd == "on" else "0")
+        return apply()
+    if cmd == "check":
+        return check()
+    print(__doc__)
+    return 0 if cmd in ("-h", "--help", "help") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+PYEOF
+  chmod 755 /usr/local/sbin/goji-guard
+  cat > /etc/systemd/system/goji-guard.service <<'UNIT'
+[Unit]
+Description=Goji Traffic Control: restore blocklist rules from the local cache
+DefaultDependencies=no
+After=local-fs.target nftables.service ufw.service
+Before=network-pre.target shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/goji-guard apply
+ExecStop=-/usr/sbin/nft delete table inet goji_guard
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  cat > /etc/systemd/system/goji-guard-update.service <<'UNIT'
+[Unit]
+Description=Goji Traffic Control: refresh blocklists
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/goji-guard update
+UNIT
+  cat > /etc/systemd/system/goji-guard-update.timer <<'UNIT'
+[Unit]
+Description=Goji Traffic Control: daily blocklist refresh
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable goji-guard.service goji-guard-update.timer >/dev/null 2>&1 || true
+  systemctl start goji-guard-update.timer >/dev/null 2>&1 || true
+  if /usr/local/sbin/goji-guard update && nft list table inet goji_guard >/dev/null 2>&1; then
+    ok "Traffic Control active (exempt: admin [${admin:-none}], panel [${PANEL_IP:-none}], tcp ports $ssh_csv and 80; manage with: goji-guard status|update|on|off)"
+  else
+    warn "Traffic Control is not active yet (lists unavailable?) — the daily timer will retry; manual: goji-guard update"
+  fi
+}
+
+# helper for the post-install command; written by install_check_command below
+install_check_command() {
+  {
+    echo '#!/usr/bin/env bash'
+    declare -f gj_row goji_check
+    echo 'goji_check "$@"'
+  } > /usr/local/sbin/goji-node-check
+  chmod 755 /usr/local/sbin/goji-node-check
+}
+
 if [[ $HARDEN -eq 1 ]]; then
   harden_system
+  harden_ssh
+  harden_ping
+  if [[ $GUARD_ON -eq 1 ]]; then harden_guard; else info "Traffic Control not installed (use --traffic-control)"; fi
 else
   info "Hardening skipped (--skip-hardening)"
 fi
+install_check_command
 
 # ---------------------------------------------------------------- wait for :443
 # Enable nginx on 443 only when the XHTTP profile is really active: Xray listens
@@ -621,7 +1351,11 @@ if ! ready; then
     ready && break
     sleep 5
   done
-  ready || die "XHTTP profile did not come up. Old profile keeps working; re-run after switching."
+  if ! ready; then
+    warn "XHTTP profile did not come up. The old profile keeps working; nginx TLS front is not enabled yet."
+    echo "    After switching the profile run:  bash install.sh --resume   (status: goji-node-check)"
+    exit 2
+  fi
 fi
 
 # ---------------------------------------------------------------- nginx :443
@@ -698,3 +1432,9 @@ Remnawave host for $DOMAIN:
   security     : tls        sni : $DOMAIN     alpn: h2
   fingerprint  : firefox    flow: (empty)
 EOF
+
+echo
+echo "Keep this SSH session open and verify a second login before closing it."
+rc=0
+goji_check || rc=$?
+exit $rc
