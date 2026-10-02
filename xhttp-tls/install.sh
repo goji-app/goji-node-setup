@@ -149,9 +149,11 @@ if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
 fi
 
 # ---------------------------------------------------------------- certificate
+RENEW_CONF=/etc/letsencrypt/renewal/$DOMAIN.conf
+ARCHIVE=/etc/letsencrypt/archive/$DOMAIN
 need_cert=1
-if [[ -f "$LIVE/fullchain.pem" ]]; then
-  if grep -q "authenticator = webroot" "/etc/letsencrypt/renewal/$DOMAIN.conf" 2>/dev/null; then
+if [[ -f "$LIVE/fullchain.pem" && -f "$RENEW_CONF" ]]; then
+  if grep -q "authenticator = webroot" "$RENEW_CONF"; then
     need_cert=0
     ok "Certificate for $DOMAIN already exists and renews via webroot"
   else
@@ -159,10 +161,19 @@ if [[ -f "$LIVE/fullchain.pem" ]]; then
   fi
 fi
 if [[ $need_cert -eq 1 ]]; then
+  # live/ or archive/ left without a renewal config (copied by hand, another
+  # ACME client, broken lineage) makes certbot refuse: move them aside.
+  if [[ ! -f "$RENEW_CONF" ]] && [[ -e "$LIVE" || -e "$ARCHIVE" ]]; then
+    bak=/root/letsencrypt-backup-$DOMAIN-$(date +%Y%m%d-%H%M%S)
+    mkdir -p "$bak"
+    [[ -e "$LIVE" ]] && mv "$LIVE" "$bak/live"
+    [[ -e "$ARCHIVE" ]] && mv "$ARCHIVE" "$bak/archive"
+    warn "Unmanaged certificate files for $DOMAIN moved to $bak"
+  fi
   mail_args=(--register-unsafely-without-email)
   [[ -n "$EMAIL" ]] && mail_args=(-m "$EMAIL")
-  certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --agree-tos --non-interactive \
-    --force-renewal "${mail_args[@]}" >/dev/null
+  certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --cert-name "$DOMAIN" \
+    --agree-tos --non-interactive --force-renewal "${mail_args[@]}" >/dev/null
   ok "Certificate issued for $DOMAIN"
 fi
 mkdir -p /etc/letsencrypt/renewal-hooks/deploy
