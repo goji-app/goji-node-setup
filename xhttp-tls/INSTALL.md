@@ -23,16 +23,30 @@ bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/mai
 
 - **BBR + fq** — только если ядро поддерживает bbr (`/etc/sysctl.d/99-goji-tuning.conf`).
 - **Auto tuning** — sysctl: буферы, backlog, somaxconn, keepalive, TCP Fast Open, conntrack, rp_filter, отключение redirects/source-route.
-- **Traffic Control** — `goji-tc.service`: qdisc fq на интерфейсе с маршрутом по умолчанию (не в контейнерах).
+- **tc fq** — `goji-tc.service`: qdisc fq на интерфейсе с маршрутом по умолчанию (не в контейнерах).
 - **ZRAM** — `goji-zram.service`, 50% RAM, zstd (fallback lz4); настройки в `/etc/default/goji-zram` (не в контейнерах).
 - **UFW** — deny incoming / allow outgoing; открыты SSH, 80, 443, порт ноды (только с `--panel-ip`, если он задан) и порты, которые сейчас слушает xray.
 - **Fail2ban** — jail `sshd` и `recidive` (`/etc/fail2ban/jail.d/goji.local`), IP панели в игнор-листе.
-- **ICMP** — входящий echo-request ограничен до 5/сек (остальной ICMP не трогается, чтобы работал PMTUD); `--icmp-drop` — полная блокировка. Бэкапы: `/etc/ufw/before*.rules.goji-bak`.
+- **SSH** — drop-in `/etc/ssh/sshd_config.d/00-goji-hardening.conf`: `MaxAuthTries 4`, `LoginGraceTime 30`, запрет agent/tunnel/X11 forwarding и `GatewayPorts`. Способ входа, `PermitRootLogin` и `AllowTcpForwarding` не меняются: скрипт сравнивает `sshd -T` до и после и при любом расхождении или ошибке откатывает файл (копии в `/var/backups/goji-node`). Если вы ходите через `ssh -A` (agent forwarding), добавьте исключение сами.
+- **Защита от ping** — nftables-таблица `inet goji_privacy` (`goji-two-way-ping.service`, поднимается до `network-pre.target`): входящий echo-request (IPv4/IPv6) ограничен до 5/сек, ICMP timestamp-request блокируется; `--icmp-drop` — полная блокировка echo. Исходящий ping, ICMP-ошибки, PMTUD и IPv6 neighbour discovery не затрагиваются. Режим: `/etc/default/goji-two-way-ping`. Правила старых версий в `/etc/ufw/before*.rules` (метка `goji-icmp`) удаляются. Пакет `nftables` ставится до любых правил файрвола, а его собственная служба `nftables.service` (на загрузке делает `flush ruleset`) отключается, если пакета раньше не было.
+- **Traffic Control (по желанию)** — `--traffic-control` (или ответ `y` на вопрос при установке). Таблица nftables `inet goji_guard` блокирует новые входящие соединения из сетей публичных списков [shadow-netlab/traffic-guard-lists](https://github.com/shadow-netlab/traffic-guard-lists) (`antiscanner`, `government_networks`, `skipa`). Исключены: loopback, уже установленные соединения, IP администратора (адрес текущей SSH-сессии и `--admin-ip`), IP панели, порт SSH и TCP/80 (чтобы не сломать продление сертификата). Списки обновляются раз в сутки (`goji-guard-update.timer`), хранятся локально, при сбое загрузки остаётся последняя рабочая копия. Из списка отбрасываются слишком широкие сети (шире /8 для IPv4, /16 для IPv6) и приватные диапазоны; список с мусором (>5% строк не IP/CIDR) отклоняется целиком. Управление: `goji-guard status | update | on | off`. Списки — сторонние, их состав вы не контролируете: оцените, не заденет ли он ваших пользователей.
 
-Флаги: `--skip-hardening`, `--icmp-drop`, `--ssh-port N`, `--allow-port 8443[/tcp|/udp]` (повторяемый).
+Флаги: `--skip-hardening`, `--icmp-drop`, `--ssh-port N`, `--allow-port 8443[/tcp|/udp]` (повторяемый), `--traffic-control` / `--no-traffic-control`, `--admin-ip IP` (повторяемый).
 
 > Если в профиле Xray есть inbound на порту, отличном от 443, и он не слушался на момент установки — добавьте его через `--allow-port`, иначе UFW его закроет.
 > Скрипт не тестировался на реальном VPS в этой сессии — сначала проверьте на тестовом сервере и держите открытой вторую SSH-сессию.
+
+## Проверка, продолжение, версия
+
+```
+bash install.sh --version      # версия установщика
+goji-node-check                # отчёт «компонент — статус» (после установки; то же: install.sh --check)
+bash install.sh --resume       # повторить установку с сохранёнными параметрами (/etc/goji-node/install.conf)
+```
+
+Коды `--check` и самой установки: `0` — всё в порядке; `1` — есть ошибка; `2` — всё установлено, но профиль XHTTP в панели ещё не применён (после переключения профиля запустите `--resume`). `130`/`143` — прерывание (Ctrl+C / TERM). `--resume` не переустанавливает уже работающую ноду и берёт `SECRET_KEY` из существующего compose-файла; параметры `SECRET_KEY` в `install.conf` не хранятся. Параллельный запуск блокируется (`/run/goji-node-setup.lock`).
+
+Перед установкой проверяются: systemd, ОС (Debian 12/13, Ubuntu 22.04/24.04 — на других предупреждение), архитектура, свободное место (≥1 GiB) и занятость порта 80.
 
 ## Профиль Xray в Remnawave
 

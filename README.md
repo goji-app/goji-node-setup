@@ -86,6 +86,11 @@ flowchart LR
 | `--skip-node` | — | не трогать Remnawave Node, настроить только nginx и сертификат |
 | `--skip-hardening` | — | не применять тюнинг и защиту (BBR/fq, tc, ZRAM, UFW, Fail2ban, ICMP) |
 | `--icmp-drop` | — | полностью блокировать входящий ping (по умолчанию лимит 5/сек) |
+| `--traffic-control` / `--no-traffic-control` | спросить | блокировка сетей сканеров по публичным спискам (nftables), по желанию |
+| `--admin-ip` | IP SSH-сессии | IP администратора, исключённый из блокировок Traffic Control, флаг можно повторять |
+| `--check` | — | отчёт «компонент — статус» (то же: `goji-node-check`) |
+| `--resume` | — | повторить установку с сохранёнными параметрами |
+| `--version` | — | версия установщика |
 | `--ssh-port` | определяется | порт SSH для UFW и Fail2ban |
 | `--allow-port` | — | дополнительный порт для UFW (`8443`, `8443/udp`), флаг можно повторять |
 
@@ -185,3 +190,7 @@ xhttp-tls/
 ## Лицензия
 
 [MIT](LICENSE), © 2026 goji-app. Сторонние шаблоны в `xhttp-tls/templates/` распространяются под своими лицензиями (тоже MIT), их тексты лежат в папках шаблонов.
+
+## Благодарности
+
+Структура проверок, откат SSH-настроек, ранний nftables-слой против ping и идея Traffic Control вдохновлены проектом [ЧебурNET Vision Installer](https://github.com/leonidkopysov/CheburNET-Vision-Installer) (MIT, © 2026 Леонид Копысов). Код здесь написан заново под протокол XHTTP+TLS; протокол, nginx-фронт и профиль Xray не менялись. Списки сетей — [shadow-netlab/traffic-guard-lists](https://github.com/shadow-netlab/traffic-guard-lists), у них своя лицензия.
