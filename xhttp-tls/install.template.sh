@@ -1360,11 +1360,22 @@ fi
 
 # ---------------------------------------------------------------- nginx :443
 info "Enabling TLS front"
+# ssl_reject_handshake needs nginx >= 1.19.4; older nginx gets a catch-all that
+# uses the same certificate and closes the connection (return 444).
+NGINX_VER=$(nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9.]*\).*#\1#p')
+if [[ "$(printf '%s\n1.19.4\n' "$NGINX_VER" | sort -V | head -1)" == "1.19.4" ]]; then
+  DEFAULT_SRV="    ssl_reject_handshake on;"
+else
+  warn "nginx $NGINX_VER is older than 1.19.4: using a catch-all server instead of ssl_reject_handshake"
+  DEFAULT_SRV="    ssl_certificate     $LIVE/fullchain.pem;
+    ssl_certificate_key $LIVE/privkey.pem;
+    return 444;"
+fi
 cat > "$CONF" <<EOF
 server {
     listen 443 ssl default_server;
     listen [::]:443 ssl default_server;
-    ssl_reject_handshake on;
+$DEFAULT_SRV
 }
 
 server {
