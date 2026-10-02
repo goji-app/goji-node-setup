@@ -254,17 +254,25 @@ if ! ss -Hltn "sport = :1080" | grep -q .; then
 fi
 
 # ---------------------------------------------------------------- wait for :443
-port_busy() { ss -Hltn "sport = :443" | grep -q .; }
-if port_busy && ! ss -Hltnp "sport = :443" | grep -q nginx; then
-  warn "Port 443 is still used by Xray (Vision)."
-  echo "    Now switch this node's profile in Remnawave to the XHTTP one"
+# Enable nginx on 443 only when the XHTTP profile is really active: Xray listens
+# on 127.0.0.1:$XRAY_PORT and nobody else holds 443. A free 443 alone is not
+# enough — it is also free for a few seconds while the node container restarts
+# with the old profile, and grabbing it then takes the old inbound down.
+xhttp_up()  { ss -Hltn "sport = :$XRAY_PORT" | grep -q .; }
+foreign443() { ss -Hltnp "sport = :443" | grep -q . && ! ss -Hltnp "sport = :443" | grep -q nginx; }
+ready() { xhttp_up && ! foreign443; }
+if ! ready; then
+  # nginx must not hold 443 while the old profile may still need it
+  rm -f "$CONF"; systemctl reload nginx
+  warn "XHTTP profile is not active yet (nothing on 127.0.0.1:$XRAY_PORT)."
+  echo "    Switch this node's profile in Remnawave to the XHTTP one"
   echo "    (inbound 127.0.0.1:$XRAY_PORT, xhttp, path $XPATH) and update the host."
-  info "Waiting up to $WAIT s for port 443 to be released..."
+  info "Waiting up to $WAIT s for the XHTTP profile..."
   for ((i = 0; i < WAIT; i += 5)); do
-    port_busy || break
+    ready && break
     sleep 5
   done
-  port_busy && die "443 is still busy. Re-run the script after switching the profile."
+  ready || die "XHTTP profile did not come up. Old profile keeps working; re-run after switching."
 fi
 
 # ---------------------------------------------------------------- nginx :443
