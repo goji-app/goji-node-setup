@@ -7,6 +7,8 @@
 #                            [--secret-key KEY] [--node-port 2222]
 #                            [--panel-ip 1.2.3.4] [--skip-node]
 #                            [--template random|analytics|blog|docs|saas]
+#                            [--skip-hardening] [--icmp-drop] [--ssh-port N]
+#                            [--allow-port 8443[/tcp|/udp]]...
 #
 # Reinstalls Remnawave Node (docker, /opt/remnanode) asking for SECRET_KEY etc.
 # Xray profile is managed by Remnawave: switch the node profile to the XHTTP one
@@ -25,6 +27,10 @@ PANEL_IP=""
 SKIP_NODE=0
 TEMPLATE=""
 NODE_DIR=/opt/remnanode
+HARDEN=1
+ICMP_DROP=0
+SSH_PORT=""
+EXTRA_PORTS=()
 
 die()  { echo -e "\e[31m[x] $*\e[0m" >&2; exit 1; }
 info() { echo -e "\e[36m[*] $*\e[0m"; }
@@ -42,7 +48,11 @@ while [[ $# -gt 0 ]]; do
     --panel-ip)  PANEL_IP="$2"; shift 2 ;;
     --skip-node) SKIP_NODE=1; shift ;;
     --template)  TEMPLATE="$2"; shift 2 ;;
-    -h|--help)   sed -n '2,15p' "$0"; exit 0 ;;
+    --skip-hardening) HARDEN=0; shift ;;
+    --icmp-drop) ICMP_DROP=1; shift ;;
+    --ssh-port)  SSH_PORT="$2"; shift 2 ;;
+    --allow-port) EXTRA_PORTS+=("$2"); shift 2 ;;
+    -h|--help)   sed -n '2,17p' "$0"; exit 0 ;;
     -*)          die "unknown option: $1" ;;
     *)           DOMAIN="$1"; shift ;;
   esac
@@ -302,6 +312,294 @@ fi
 
 if ! ss -Hltn "sport = :1080" | grep -q .; then
   warn "Nothing listens on :1080 — Psiphon is down; Gemini will go DIRECT (profile falls back automatically)"
+fi
+
+# ---------------------------------------------------------------- hardening & tuning
+# ---------------------------------------------------------------- hardening & tuning
+# UFW, Fail2ban, ZRAM, BBR + fq, tc (fq on the uplink), sysctl tuning and
+# rate-limiting of incoming ICMP echo. Every step is best-effort: a failure prints
+# a warning and never aborts the node install. Skip with --skip-hardening.
+harden_system() {
+  local in_container=0
+  systemd-detect-virt --container --quiet 2>/dev/null && in_container=1
+
+  info "Hardening and tuning the server"
+  if ! apt-get install -y -qq ufw fail2ban >/dev/null; then
+    warn "could not install ufw/fail2ban — hardening skipped"
+    return 0
+  fi
+  apt-get install -y -qq python3-systemd >/dev/null 2>&1 || true
+
+  # ---- SSH port(s): detected before any firewall rule so we never lock ourselves out
+  local ssh_ports=()
+  if [[ -n "$SSH_PORT" ]]; then
+    ssh_ports=("$SSH_PORT")
+  else
+    mapfile -t ssh_ports < <(sshd -T 2>/dev/null | awk '$1=="port"{print $2}' | sort -un)
+    if [[ ${#ssh_ports[@]} -eq 0 ]]; then
+      mapfile -t ssh_ports < <(ss -Hltnp 2>/dev/null | awk '/sshd/{n=split($4,a,":"); print a[n]}' | sort -un)
+    fi
+    if [[ ${#ssh_ports[@]} -eq 0 ]]; then
+      warn "could not detect the SSH port — assuming 22 (use --ssh-port to override)"
+      ssh_ports=(22)
+    fi
+  fi
+
+  # ---- sysctl: BBR + fq, socket buffers, backlog, basic anti-spoofing
+  local SYSCTL=/etc/sysctl.d/99-goji-tuning.conf bbr_ok=0
+  modprobe tcp_bbr 2>/dev/null || true
+  modprobe nf_conntrack 2>/dev/null || true
+  if grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+    bbr_ok=1
+    echo tcp_bbr > /etc/modules-load.d/goji-bbr.conf
+  else
+    warn "BBR is not available in this kernel — keeping the current congestion control"
+  fi
+  {
+    echo "# Managed by goji-node-setup"
+    if [[ $bbr_ok -eq 1 ]]; then
+      echo "net.core.default_qdisc = fq"
+      echo "net.ipv4.tcp_congestion_control = bbr"
+    fi
+    cat <<'EOF'
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_keepalive_time = 300
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.ip_local_port_range = 10240 65535
+net.core.somaxconn = 4096
+net.core.netdev_max_backlog = 16384
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_syncookies = 1
+net.core.rmem_max = 33554432
+net.core.wmem_max = 33554432
+net.ipv4.tcp_rmem = 4096 131072 33554432
+net.ipv4.tcp_wmem = 4096 65536 33554432
+fs.file-max = 1048576
+vm.swappiness = 100
+vm.page-cluster = 0
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+EOF
+    if [[ -e /proc/sys/net/netfilter/nf_conntrack_max ]]; then
+      echo "net.netfilter.nf_conntrack_max = 262144"
+      echo nf_conntrack > /etc/modules-load.d/goji-conntrack.conf
+    fi
+  } > "$SYSCTL"
+  if sysctl -q -p "$SYSCTL" >/dev/null 2>&1; then
+    ok "sysctl tuning applied ($(sysctl -n net.ipv4.tcp_congestion_control)/$(sysctl -n net.core.default_qdisc))"
+  else
+    warn "some sysctl keys were rejected (container/VPS limits) — the rest is applied; see: sysctl -p $SYSCTL"
+  fi
+
+  # ---- Traffic Control: fq on the uplink (default_qdisc only covers new interfaces)
+  if [[ $in_container -eq 1 ]]; then
+    warn "container detected — skipping tc and ZRAM"
+  else
+    cat > /usr/local/sbin/goji-tc.sh <<'EOF'
+#!/bin/sh
+# fq on the default-route interface; keeps an existing fq (or mq with fq children).
+IF=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="dev"){print $(i+1); exit}}')
+[ -n "$IF" ] || exit 0
+tc qdisc show dev "$IF" | grep -q '^qdisc fq ' && exit 0
+tc qdisc replace dev "$IF" root fq 2>/dev/null || tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
+EOF
+    chmod 755 /usr/local/sbin/goji-tc.sh
+    cat > /etc/systemd/system/goji-tc.service <<'EOF'
+[Unit]
+Description=Goji traffic control (fq on uplink)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/goji-tc.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # ---- ZRAM swap (size = PERCENT of RAM, edit /etc/default/goji-zram)
+    cat > /usr/local/sbin/goji-zram.sh <<'EOF'
+#!/bin/sh
+set -eu
+[ -r /etc/default/goji-zram ] && . /etc/default/goji-zram
+PERCENT=${PERCENT:-50}
+ALGO=${ALGO:-zstd}
+case "${1:-start}" in
+  start)
+    swapon --noheadings --show=NAME | grep -q '^/dev/zram' && exit 0
+    modprobe zram
+    mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+    size=$((mem_kb * PERCENT / 100 * 1024))
+    dev=$(zramctl --find --algorithm "$ALGO" --size "$size" 2>/dev/null) \
+      || dev=$(zramctl --find --algorithm lz4 --size "$size" 2>/dev/null) \
+      || dev=$(zramctl --find --size "$size")
+    mkswap -q "$dev"
+    swapon --priority 100 "$dev"
+    ;;
+  stop)
+    for d in $(swapon --noheadings --show=NAME | grep '^/dev/zram' || true); do
+      swapoff "$d"
+      zramctl --reset "$d"
+    done
+    ;;
+esac
+EOF
+    chmod 755 /usr/local/sbin/goji-zram.sh
+    [[ -f /etc/default/goji-zram ]] || printf 'PERCENT=50\nALGO=zstd\n' > /etc/default/goji-zram
+    cat > /etc/systemd/system/goji-zram.service <<'EOF'
+[Unit]
+Description=Goji ZRAM swap
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/goji-zram.sh start
+ExecStop=/usr/local/sbin/goji-zram.sh stop
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    if systemctl enable --now goji-tc.service >/dev/null 2>&1; then
+      ok "tc: fq on the uplink interface"
+    else
+      warn "goji-tc.service failed — see: systemctl status goji-tc"
+    fi
+    if systemctl enable --now goji-zram.service >/dev/null 2>&1; then
+      ok "ZRAM swap enabled ($(swapon --noheadings --show=NAME,SIZE | grep zram | tr -s ' ' | head -1))"
+    else
+      warn "ZRAM is not available (kernel without zram?) — see: systemctl status goji-zram"
+    fi
+  fi
+
+  # ---- UFW (+ ICMP echo limiting). An already active ufw keeps its defaults.
+  if systemctl is-active --quiet firewalld 2>/dev/null; then
+    warn "firewalld is active — ufw and ICMP rules skipped"
+  else
+    local np="${NODE_PORT:-$OLD_PORT}" was_active=0 p proto port
+    ufw status | grep -q "Status: active" && was_active=1
+    if [[ $was_active -eq 0 ]]; then
+      ufw default deny incoming >/dev/null
+      ufw default allow outgoing >/dev/null
+    fi
+    for p in "${ssh_ports[@]}"; do ufw allow "$p/tcp" >/dev/null; done
+    ufw allow 80/tcp >/dev/null
+    ufw allow 443/tcp >/dev/null
+    if [[ -n "$np" ]]; then
+      if [[ -n "$PANEL_IP" ]]; then
+        ufw allow from "$PANEL_IP" to any port "$np" proto tcp >/dev/null
+      else
+        warn "no --panel-ip: $np/tcp is open to everyone so the panel can reach the node; pass --panel-ip to restrict it"
+        ufw allow "$np/tcp" >/dev/null
+      fi
+    fi
+    for p in "${EXTRA_PORTS[@]}"; do
+      if [[ "$p" =~ ^[0-9]+(/(tcp|udp))?$ ]]; then
+        ufw allow "$p" >/dev/null
+      else
+        warn "ignoring invalid --allow-port '$p' (use 8443 or 8443/tcp)"
+      fi
+    done
+    # Public ports already served by the Xray core (other inbounds of the profile).
+    while read -r proto port; do
+      [[ -n "$port" ]] || continue
+      ufw allow "$port/$proto" >/dev/null && info "ufw: keeping $port/$proto (listened by xray)"
+    done < <(ss -Hltunp 2>/dev/null | awk '$5 !~ /^(127\.|\[::1\]|::1)/ && /xray|rw-core/ {n=split($5,a,":"); print $1, a[n]}' | sort -u)
+
+    # ICMP echo-request: rate-limited by default, dropped with --icmp-drop.
+    # Other ICMP (destination-unreachable, time-exceeded, ICMPv6 ND) stays untouched,
+    # so Path MTU Discovery and IPv6 keep working.
+    local rf
+    for rf in /etc/ufw/before.rules /etc/ufw/before6.rules; do
+      [[ -f "$rf" ]] || continue
+      [[ -f "$rf.goji-bak" ]] || cp -p "$rf" "$rf.goji-bak"
+      sed -i '/--comment goji-icmp/d' "$rf"
+      local chain=ufw-before-input itype="icmp --icmp-type echo-request"
+      if [[ "$rf" == *6.rules ]]; then chain=ufw6-before-input; itype="icmpv6 --icmpv6-type echo-request"; fi
+      local pat="^-A $chain -p $itype -j ACCEPT\$"
+      local drop="-A $chain -p $itype -m comment --comment goji-icmp -j DROP"
+      local lim="-A $chain -p $itype -m limit --limit 5/second --limit-burst 10 -m comment --comment goji-icmp -j ACCEPT"
+      if [[ $ICMP_DROP -eq 1 ]]; then
+        sed -i "/$pat/i\\$drop" "$rf"
+      else
+        sed -i -e "/$pat/i\\$lim" -e "/$pat/i\\$drop" "$rf"
+      fi
+    done
+
+    if [[ $was_active -eq 1 ]]; then
+      ufw reload >/dev/null || warn "ufw reload failed — check /etc/ufw/before.rules"
+    else
+      ufw --force enable >/dev/null || warn "ufw failed to enable"
+    fi
+    if ufw status | grep -q "Status: active"; then
+      ok "ufw active (ssh: ${ssh_ports[*]}, 80, 443$([[ -n "$np" ]] && echo ", $np"))"
+      [[ $ICMP_DROP -eq 1 ]] && ok "ICMP echo-request: dropped" || ok "ICMP echo-request: limited to 5/s"
+    fi
+  fi
+
+  # ---- Fail2ban (ssh + repeat offenders). Default ban action is used, it works next to ufw.
+  local F2B=/etc/fail2ban/jail.d/goji.local ssh_csv
+  ssh_csv=$(IFS=,; echo "${ssh_ports[*]}")
+  cat > "$F2B" <<EOF
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+backend = systemd
+ignoreip = 127.0.0.1/8 ::1 $PANEL_IP
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 1w
+
+[sshd]
+enabled = true
+port = $ssh_csv
+maxretry = 4
+
+[recidive]
+enabled = true
+backend = auto
+bantime = 1w
+findtime = 1d
+maxretry = 3
+EOF
+  if fail2ban-client -t >/dev/null 2>&1; then
+    systemctl enable fail2ban >/dev/null 2>&1 || true
+    systemctl restart fail2ban
+    sleep 2
+    if fail2ban-client ping >/dev/null 2>&1; then
+      ok "fail2ban running (jails: sshd, recidive)"
+    else
+      warn "fail2ban did not start — see: journalctl -u fail2ban"
+    fi
+  else
+    rm -f "$F2B"
+    warn "fail2ban config test failed — jail file removed; see: fail2ban-client -t"
+  fi
+}
+
+if [[ $HARDEN -eq 1 ]]; then
+  harden_system
+else
+  info "Hardening skipped (--skip-hardening)"
 fi
 
 # ---------------------------------------------------------------- wait for :443
