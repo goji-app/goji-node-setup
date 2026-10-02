@@ -17,6 +17,23 @@ bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/mai
 
 Перед запуском: A-запись домена указывает на этот VPS, нода добавлена в панели.
 
+## Усиление защиты и тюнинг (включено по умолчанию)
+
+Скрипт после установки ноды настраивает сервер (best-effort: сбой отдельного шага даёт предупреждение, а не остановку):
+
+- **BBR + fq** — только если ядро поддерживает bbr (`/etc/sysctl.d/99-goji-tuning.conf`).
+- **Auto tuning** — sysctl: буферы, backlog, somaxconn, keepalive, TCP Fast Open, conntrack, rp_filter, отключение redirects/source-route.
+- **Traffic Control** — `goji-tc.service`: qdisc fq на интерфейсе с маршрутом по умолчанию (не в контейнерах).
+- **ZRAM** — `goji-zram.service`, 50% RAM, zstd (fallback lz4); настройки в `/etc/default/goji-zram` (не в контейнерах).
+- **UFW** — deny incoming / allow outgoing; открыты SSH, 80, 443, порт ноды (только с `--panel-ip`, если он задан) и порты, которые сейчас слушает xray.
+- **Fail2ban** — jail `sshd` и `recidive` (`/etc/fail2ban/jail.d/goji.local`), IP панели в игнор-листе.
+- **ICMP** — входящий echo-request ограничен до 5/сек (остальной ICMP не трогается, чтобы работал PMTUD); `--icmp-drop` — полная блокировка. Бэкапы: `/etc/ufw/before*.rules.goji-bak`.
+
+Флаги: `--skip-hardening`, `--icmp-drop`, `--ssh-port N`, `--allow-port 8443[/tcp|/udp]` (повторяемый).
+
+> Если в профиле Xray есть inbound на порту, отличном от 443, и он не слушался на момент установки — добавьте его через `--allow-port`, иначе UFW его закроет.
+> Скрипт не тестировался на реальном VPS в этой сессии — сначала проверьте на тестовом сервере и держите открытой вторую SSH-сессию.
+
 ## Профиль Xray в Remnawave
 
 `xray-node-profile.json` — универсальный профиль (inbound `XHTTP-TLS`,

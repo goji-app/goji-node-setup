@@ -84,6 +84,10 @@ flowchart LR
 | `--template` | `random` | заглушка: `random`, `analytics`, `blog`, `docs`, `saas` |
 | `--wait` | `900` | сколько секунд ждать переключения профиля в панели |
 | `--skip-node` | — | не трогать Remnawave Node, настроить только nginx и сертификат |
+| `--skip-hardening` | — | не применять тюнинг и защиту (BBR/fq, tc, ZRAM, UFW, Fail2ban, ICMP) |
+| `--icmp-drop` | — | полностью блокировать входящий ping (по умолчанию лимит 5/сек) |
+| `--ssh-port` | определяется | порт SSH для UFW и Fail2ban |
+| `--allow-port` | — | дополнительный порт для UFW (`8443`, `8443/udp`), флаг можно повторять |
 
 ---
 
