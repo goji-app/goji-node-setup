@@ -10,6 +10,7 @@
 #                            [--skip-hardening] [--icmp-drop] [--ssh-port N]
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
+#                            [--upgrade-os|--no-upgrade-os]
 #   bash install.sh --check | --resume | --version
 #
 # Reinstalls Remnawave Node (docker, /opt/remnanode) asking for SECRET_KEY etc.
@@ -38,6 +39,8 @@ EXTRA_PORTS=()
 ADMIN_IPS=()
 GUARD_MODE=""
 GUARD_ON=0
+UPGRADE_MODE=""
+UPGRADE_ON=0
 RESUME=0
 CHECK=0
 
@@ -129,6 +132,7 @@ goji_check() {
   else
     gj_row warn "Усиление защиты" "пропущено (--skip-hardening)"
   fi
+  if [[ -f /var/run/reboot-required ]]; then gj_row warn "Перезагрузка" "нужна для применения обновлений ОС"; fi
   echo "----------------------------------------------------------------"
   if (( fail )); then echo "Итог: есть ошибки."; return 1; fi
   if (( pending )); then echo "Итог: всё установлено, ожидается применение профиля XHTTP в Remnawave."; return 2; fi
@@ -150,7 +154,7 @@ if [[ $RESUME -eq 1 ]]; then
   . "$CONF_FILE"
   DOMAIN=${GOJI_DOMAIN:-}; EMAIL=${GOJI_EMAIL:-}; XRAY_PORT=${GOJI_XRAY_PORT:-$XRAY_PORT}; XPATH=${GOJI_XPATH:-$XPATH}
   NODE_PORT=${GOJI_NODE_PORT:-}; PANEL_IP=${GOJI_PANEL_IP:-}; SSH_PORT=${GOJI_SSH_PORT:-}
-  SKIP_NODE=${GOJI_SKIP_NODE:-0}; HARDEN=${GOJI_HARDEN:-1}; ICMP_DROP=${GOJI_ICMP_DROP:-0}; GUARD_MODE=${GOJI_GUARD:-0}
+  SKIP_NODE=${GOJI_SKIP_NODE:-0}; HARDEN=${GOJI_HARDEN:-1}; ICMP_DROP=${GOJI_ICMP_DROP:-0}; GUARD_MODE=${GOJI_GUARD:-0}; UPGRADE_MODE=${GOJI_UPGRADE:-0}
   read -ra ADMIN_IPS <<< "${GOJI_ADMIN_IPS:-}"
   read -ra EXTRA_PORTS <<< "${GOJI_EXTRA_PORTS:-}"
 fi
@@ -173,8 +177,10 @@ while [[ $# -gt 0 ]]; do
     --admin-ip)  ADMIN_IPS+=("$2"); shift 2 ;;
     --traffic-control)    GUARD_MODE=1; shift ;;
     --no-traffic-control) GUARD_MODE=0; shift ;;
+    --upgrade-os)    UPGRADE_MODE=1; shift ;;
+    --no-upgrade-os) UPGRADE_MODE=0; shift ;;
     --resume|--check) shift ;;
-    -h|--help)   sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,19p' "$0"; exit 0 ;;
     -*)          die "unknown option: $1" ;;
     *)           DOMAIN="$1"; shift ;;
   esac
@@ -278,6 +284,16 @@ if [[ $HARDEN -eq 1 ]]; then
   GUARD_ON=$GUARD_MODE
 fi
 
+# Installing updates of the current OS release (apt upgrade, not a release upgrade).
+if [[ -z "$UPGRADE_MODE" ]]; then
+  UPGRADE_MODE=0
+  if [[ -r /dev/tty ]]; then
+    read -r -p "Install available updates of this OS release (apt upgrade) first? [Y/n]: " __u </dev/tty || true
+    [[ "${__u:-y}" =~ ^[yYдД] ]] && UPGRADE_MODE=1
+  fi
+fi
+UPGRADE_ON=$UPGRADE_MODE
+
 save_conf() {
   mkdir -p /etc/goji-node
   {
@@ -294,6 +310,7 @@ save_conf() {
     printf 'GOJI_HARDEN=%q\n' "$HARDEN"
     printf 'GOJI_ICMP_DROP=%q\n' "$ICMP_DROP"
     printf 'GOJI_GUARD=%q\n' "$GUARD_ON"
+    printf 'GOJI_UPGRADE=%q\n' "$UPGRADE_ON"
     printf 'GOJI_ADMIN_IPS=%q\n' "${ADMIN_IPS[*]:-}"
     printf 'GOJI_EXTRA_PORTS=%q\n' "${EXTRA_PORTS[*]:-}"
   } > "$CONF_FILE.tmp"
@@ -310,9 +327,34 @@ if [[ $RESUME -eq 1 && $SKIP_NODE -eq 0 ]] && command -v docker >/dev/null \
 fi
 
 # ---------------------------------------------------------------- packages
-info "Installing nginx and certbot"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
+
+# Updates of the installed release only (no do-release-upgrade). The plan is simulated first:
+# if it would REMOVE any package nothing is upgraded. Config files you changed are kept
+# (--force-confold) and needrestart is told not to restart services behind your back.
+os_upgrade() {
+  local plan removed upgraded
+  plan=$(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null) || { warn "apt could not simulate the upgrade — skipped"; return 0; }
+  removed=$(grep -c '^Remv ' <<< "$plan" || true)
+  upgraded=$(grep -c '^Inst ' <<< "$plan" || true)
+  if [[ ${removed:-0} -gt 0 ]]; then
+    warn "the upgrade plan would remove $removed package(s) — not upgrading; review with: apt-get -s upgrade"
+    return 0
+  fi
+  if [[ ${upgraded:-0} -eq 0 ]]; then ok "system is up to date"; return 0; fi
+  info "Installing $upgraded package update(s) of this OS release"
+  if NEEDRESTART_SUSPEND=1 apt-get -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade >/dev/null; then
+    ok "system packages updated ($upgraded)"
+    [[ -f /var/run/reboot-required ]] && warn "a reboot is required to finish the updates (kernel/libc) — reboot when convenient"
+  else
+    warn "apt upgrade failed — see: apt-get -f install; continuing without it"
+  fi
+  return 0
+}
+if [[ $UPGRADE_ON -eq 1 ]]; then os_upgrade; else info "OS package upgrade skipped (use --upgrade-os)"; fi
+
+info "Installing nginx and certbot"
 # nftables is installed before any firewall rule exists: its postinst may load the packaged
 # /etc/nftables.conf ("flush ruleset"), which would wipe ufw/docker rules loaded earlier.
 # We only need the nft binary, so a freshly installed nftables.service is disabled.
