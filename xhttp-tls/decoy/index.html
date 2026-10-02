@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quillmetric — privacy-first product analytics</title>
+  <meta name="description" content="Quillmetric is a lightweight, cookie-free product analytics platform. Self-hosted in the EU. Currently in private beta.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      --bg: #fbfaf7; --fg: #1d1d1f; --muted: #6b6b70; --line: #e6e3dc;
+      --accent: #3b5bdb; --card: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111214; --fg: #ececee; --muted: #9a9aa2; --line: #26282c; --accent: #7b93f5; --card: #17181b; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+    header { border-bottom: 1px solid var(--line); }
+    nav { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 650; color: var(--fg); }
+    .logo:hover { text-decoration: none; }
+    nav ul { display: flex; gap: 24px; list-style: none; margin: 0; padding: 0; font-size: 15px; }
+    nav ul a { color: var(--muted); }
+    .hero { padding: 96px 0 72px; }
+    .badge { display: inline-block; font-size: 13px; color: var(--accent); border: 1px solid var(--line);
+      border-radius: 999px; padding: 4px 12px; margin-bottom: 20px; }
+    h1 { font-size: clamp(34px, 5vw, 52px); line-height: 1.12; letter-spacing: -0.02em; margin: 0 0 20px; max-width: 760px; }
+    .lead { font-size: 19px; color: var(--muted); max-width: 640px; margin: 0 0 32px; }
+    .btn { display: inline-block; background: var(--fg); color: var(--bg); padding: 12px 22px; border-radius: 8px; font-weight: 550; }
+    .btn:hover { text-decoration: none; opacity: .9; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; padding: 24px 0 80px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+    .card h3 { margin: 0 0 8px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 15px; }
+    section h2 { font-size: 28px; letter-spacing: -0.01em; margin: 0 0 12px; }
+    .muted { color: var(--muted); }
+    pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto;
+      font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; padding: 40px 0 88px; }
+    @media (max-width: 760px) { .split { grid-template-columns: 1fr; } nav ul { display: none; } .hero { padding: 64px 0 48px; } }
+    footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size: 14px; color: var(--muted); }
+    footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <nav>
+        <a class="logo" href="/">
+          <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M9 21l5-6 4 3 5-8" stroke="#fbfaf7" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Quillmetric
+        </a>
+        <ul>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#sdk">SDK</a></li>
+          <li><a href="#privacy">Privacy</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <span class="badge">Private beta</span>
+        <h1>Product analytics without cookies, fingerprinting or third parties.</h1>
+        <p class="lead">Quillmetric collects aggregate usage events from your apps and websites, keeps every byte on EU infrastructure and never builds individual profiles.</p>
+        <a class="btn" href="#privacy">How we handle data</a>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="wrap">
+        <div class="grid">
+          <div class="card"><h3>Cookie-free by design</h3><p>Sessions are derived from short-lived, salted hashes that rotate every 24 hours. No consent banner required.</p></div>
+          <div class="card"><h3>Tiny SDK</h3><p>Under 3&nbsp;KB for the web, native modules for iOS and Android. Events are batched and sent over a single connection.</p></div>
+          <div class="card"><h3>EU-hosted</h3><p>Ingestion and storage run on our own servers in the European Union. Nothing is shared with ad networks.</p></div>
+          <div class="card"><h3>Funnels &amp; retention</h3><p>Answer product questions with funnels, cohorts and retention curves built on aggregated data.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="sdk">
+      <div class="wrap split">
+        <div>
+          <h2>Two lines to get started</h2>
+          <p class="muted">Add the snippet, call <code>track()</code> where it matters. Events are queued locally and flushed to the telemetry endpoint in compact batches.</p>
+          <p class="muted">SDK access is available to beta participants.</p>
+        </div>
+<pre>import { init, track } from "@quillmetric/web";
+
+init({ project: "your-project-key" });
+
+track("checkout_completed", {
+  plan: "team",
+  seats: 5
+});</pre>
+      </div>
+    </section>
+
+    <section id="privacy">
+      <div class="wrap" style="padding-bottom: 88px;">
+        <h2>Privacy</h2>
+        <p class="muted" style="max-width: 720px;">We do not store IP addresses, user agents or any device identifiers. Raw events are aggregated within 24 hours and deleted after 30 days. Quillmetric is currently invite-only while we stabilise the ingestion pipeline; we are not accepting new sign-ups at the moment.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>&copy; <span id="y">2026</span> Quillmetric</span>
+      <span>Ingestion status: operational</span>
+    </div>
+  </footer>
+  <script>document.getElementById("y").textContent = new Date().getFullYear();</script>
+</body>
+</html>
