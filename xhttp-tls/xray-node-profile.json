@@ -1,5 +1,7 @@
 {
   "log": {
+    "access": "none",
+    "dnsLog": false,
     "loglevel": "warning"
   },
   "dns": {
@@ -82,6 +84,28 @@
     ],
     "rules": [
       {
+        "port": "443",
+        "type": "field",
+        "network": "udp",
+        "inboundTag": [
+          "XHTTP-TLS"
+        ],
+        "outboundTag": "BLOCK"
+      },
+      {
+        "type": "field",
+        "port": "25",
+        "network": "tcp",
+        "outboundTag": "BLOCK"
+      },
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "BLOCK"
+      },
+      {
         "ip": [
           "geoip:private"
         ],
@@ -97,15 +121,14 @@
       },
       {
         "type": "field",
-        "protocol": [
-          "bittorrent"
+        "domain": [
+          "geosite:category-ads-all",
+          "domain:analytics.google.com",
+          "domain:adjust.net.in",
+          "domain:amplitude.com",
+          "domain:metrika.yandex.ru",
+          "domain:mytracker.ru"
         ],
-        "outboundTag": "BLOCK"
-      },
-      {
-        "type": "field",
-        "port": "25",
-        "network": "tcp",
         "outboundTag": "BLOCK"
       },
       {
