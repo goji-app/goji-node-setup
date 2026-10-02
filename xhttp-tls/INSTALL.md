@@ -7,11 +7,13 @@
 ## Установка (на VPS, от root)
 
 ```
-bash <(curl -fsSL -H "Authorization: token <TOKEN>" https://raw.githubusercontent.com/goji-app/goji-node-setup/main/xhttp-tls/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/main/xhttp-tls/install.sh)
 ```
 
 Скрипт спросит домен, SECRET_KEY ноды, NODE_PORT, IP панели и e-mail.
-Всё можно передать флагами: `install.sh <домен> --secret-key ... --node-port 2222 --panel-ip ... --email ...`
+Всё можно передать флагами: `install.sh <домен> --secret-key ... --node-port 2222 --panel-ip ... --email ... --template blog`
+
+Заглушка выбирается случайно из `templates/` (analytics, blog, docs, saas), при повторном запуске сохраняется. После правок в `templates/` — `python build.py`.
 
 Перед запуском: A-запись домена указывает на этот VPS, нода добавлена в панели.
 
