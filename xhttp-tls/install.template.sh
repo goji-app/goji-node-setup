@@ -11,6 +11,9 @@
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
 #                            [--upgrade-os|--no-upgrade-os]
+#                            [--panel-url https://panel.example.com] [--panel-node NAME]
+#                            [--panel-profile NAME] [--panel-host REMARK] [--panel-squad NAME]...
+#                            [--panel-overwrite-profile] [--no-panel]   (token: env GOJI_PANEL_TOKEN)
 #   bash install.sh --check | --resume | --version
 #
 # Reinstalls Remnawave Node (docker, /opt/remnanode) asking for SECRET_KEY etc.
@@ -41,6 +44,14 @@ GUARD_MODE=""
 GUARD_ON=0
 UPGRADE_MODE=""
 UPGRADE_ON=0
+PANEL_URL=""
+PANEL_TOKEN="${GOJI_PANEL_TOKEN:-}"
+PANEL_NODE=""
+PANEL_PROFILE="Goji XHTTP-TLS"
+PANEL_HOST=""
+PANEL_SQUADS=()
+PANEL_OVERWRITE=0
+PANEL_MODE=""
 RESUME=0
 CHECK=0
 
@@ -155,6 +166,9 @@ if [[ $RESUME -eq 1 ]]; then
   DOMAIN=${GOJI_DOMAIN:-}; EMAIL=${GOJI_EMAIL:-}; XRAY_PORT=${GOJI_XRAY_PORT:-$XRAY_PORT}; XPATH=${GOJI_XPATH:-$XPATH}
   NODE_PORT=${GOJI_NODE_PORT:-}; PANEL_IP=${GOJI_PANEL_IP:-}; SSH_PORT=${GOJI_SSH_PORT:-}
   SKIP_NODE=${GOJI_SKIP_NODE:-0}; HARDEN=${GOJI_HARDEN:-1}; ICMP_DROP=${GOJI_ICMP_DROP:-0}; GUARD_MODE=${GOJI_GUARD:-0}; UPGRADE_MODE=${GOJI_UPGRADE:-0}
+  PANEL_URL=${GOJI_PANEL_URL:-}; PANEL_NODE=${GOJI_PANEL_NODE:-}; PANEL_PROFILE=${GOJI_PANEL_PROFILE:-$PANEL_PROFILE}
+  PANEL_HOST=${GOJI_PANEL_HOST:-}; PANEL_OVERWRITE=${GOJI_PANEL_OVERWRITE:-0}; read -ra PANEL_SQUADS <<< "${GOJI_PANEL_SQUADS:-}"
+  [[ -z $PANEL_URL ]] || PANEL_MODE=1
   read -ra ADMIN_IPS <<< "${GOJI_ADMIN_IPS:-}"
   read -ra EXTRA_PORTS <<< "${GOJI_EXTRA_PORTS:-}"
 fi
@@ -178,9 +192,17 @@ while [[ $# -gt 0 ]]; do
     --traffic-control)    GUARD_MODE=1; shift ;;
     --no-traffic-control) GUARD_MODE=0; shift ;;
     --upgrade-os)    UPGRADE_MODE=1; shift ;;
+    --panel-url)     PANEL_URL="$2"; PANEL_MODE=1; shift 2 ;;
+    --panel-token)   PANEL_TOKEN="$2"; warn "--panel-token is visible in the process list; prefer GOJI_PANEL_TOKEN or the hidden prompt"; shift 2 ;;
+    --panel-node)    PANEL_NODE="$2"; shift 2 ;;
+    --panel-profile) PANEL_PROFILE="$2"; shift 2 ;;
+    --panel-host)    PANEL_HOST="$2"; shift 2 ;;
+    --panel-squad)   PANEL_SQUADS+=("$2"); shift 2 ;;
+    --panel-overwrite-profile) PANEL_OVERWRITE=1; shift ;;
+    --no-panel)      PANEL_MODE=0; PANEL_URL=""; shift ;;
     --no-upgrade-os) UPGRADE_MODE=0; shift ;;
     --resume|--check) shift ;;
-    -h|--help)   sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,22p' "$0"; exit 0 ;;
     -*)          die "unknown option: $1" ;;
     *)           DOMAIN="$1"; shift ;;
   esac
@@ -284,6 +306,23 @@ if [[ $HARDEN -eq 1 ]]; then
   GUARD_ON=$GUARD_MODE
 fi
 
+# Remnawave panel: profile, node assignment and host through the panel API (opt-in).
+if [[ "$PANEL_MODE" != 0 ]]; then
+  if [[ -z "$PANEL_URL" && "$PANEL_MODE" != 1 && $RESUME -eq 0 && -r /dev/tty ]]; then
+    read -r -p "Configure the Remnawave panel automatically (profile, node, host) via its API? [y/N]: " __p </dev/tty || true
+    [[ "${__p:-}" =~ ^[yYдД] ]] && PANEL_MODE=1
+  fi
+  if [[ "$PANEL_MODE" == 1 ]]; then
+    [[ -n "$PANEL_URL" ]] || ask PANEL_URL "Panel address, e.g. https://panel.example.com" ""
+    PANEL_URL="${PANEL_URL%/}"
+    [[ "$PANEL_URL" =~ ^https?://[^[:space:]]+$ ]] || die "invalid panel URL: '$PANEL_URL'"
+    if [[ -z "$PANEL_TOKEN" && $RESUME -eq 0 ]]; then
+      ask PANEL_TOKEN "Panel API token (hidden; created in the panel's API tokens)" "" secret
+    fi
+    [[ -n "$PANEL_TOKEN" ]] || warn "no panel API token — the panel step will be skipped (set GOJI_PANEL_TOKEN and use --resume)"
+  fi
+fi
+
 # Installing updates of the current OS release (apt upgrade, not a release upgrade).
 if [[ -z "$UPGRADE_MODE" ]]; then
   UPGRADE_MODE=0
@@ -311,6 +350,12 @@ save_conf() {
     printf 'GOJI_ICMP_DROP=%q\n' "$ICMP_DROP"
     printf 'GOJI_GUARD=%q\n' "$GUARD_ON"
     printf 'GOJI_UPGRADE=%q\n' "$UPGRADE_ON"
+    printf 'GOJI_PANEL_URL=%q\n' "$PANEL_URL"
+    printf 'GOJI_PANEL_NODE=%q\n' "$PANEL_NODE"
+    printf 'GOJI_PANEL_PROFILE=%q\n' "$PANEL_PROFILE"
+    printf 'GOJI_PANEL_HOST=%q\n' "$PANEL_HOST"
+    printf 'GOJI_PANEL_OVERWRITE=%q\n' "$PANEL_OVERWRITE"
+    printf 'GOJI_PANEL_SQUADS=%q\n' "${PANEL_SQUADS[*]:-}"
     printf 'GOJI_ADMIN_IPS=%q\n' "${ADMIN_IPS[*]:-}"
     printf 'GOJI_EXTRA_PORTS=%q\n' "${EXTRA_PORTS[*]:-}"
   } > "$CONF_FILE.tmp"
@@ -361,6 +406,7 @@ info "Installing nginx and certbot"
 pkgs=(nginx certbot curl ca-certificates iproute2)
 NFT_PREINSTALLED=0; command -v nft >/dev/null && NFT_PREINSTALLED=1
 [[ $HARDEN -eq 1 ]] && pkgs+=(nftables)
+[[ -n "$PANEL_URL" || $GUARD_ON -eq 1 ]] && pkgs+=(python3-minimal)
 apt-get install -y -qq "${pkgs[@]}" >/dev/null
 if [[ $HARDEN -eq 1 && $NFT_PREINSTALLED -eq 0 ]]; then
   systemctl disable nftables.service >/dev/null 2>&1 || true
@@ -1354,6 +1400,277 @@ UNIT
   fi
 }
 
+# ---------------------------------------------------------------- Remnawave panel (API)
+# Creates/reuses the config profile, makes it active on this node and creates/updates the
+# host - the manual steps from "Профиль Xray в Remnawave" / "Хост в Remnawave" in INSTALL.md.
+install_panel_tool() {
+  mkdir -p /usr/share/goji-node
+  echo "__PROFILE_B64__" | base64 -d > /usr/share/goji-node/xray-node-profile.json
+  cat > /usr/local/sbin/goji-panel <<'PYEOF'
+#!/usr/bin/env python3
+"""goji-panel - configure a Remnawave panel for the Goji XHTTP+TLS node over its REST API.
+
+  goji-panel sync --url https://panel.example.com --domain node.example.com [options]
+
+Creates (or reuses) the config profile, makes it the active profile of this node, and
+creates or updates the host. Nothing is deleted. The API token is read from the
+environment variable GOJI_PANEL_TOKEN (create it in the panel: Settings -> API tokens).
+Endpoints and fields follow the Remnawave backend contract (checked against v3.4.4).
+"""
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+PROFILE_FILE = "/usr/share/goji-node/xray-node-profile.json"
+
+
+class ApiError(Exception):
+    pass
+
+
+class Panel:
+    def __init__(self, base, token):
+        self.base = base.rstrip("/")
+        self.token = token
+
+    def call(self, method, path, body=None):
+        url = self.base + path
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(url, data=data, method=method, headers={
+            "Authorization": "Bearer " + self.token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            # the panel refuses requests that do not look like they came through an HTTPS reverse proxy
+            "X-Forwarded-For": "127.0.0.1",
+            "X-Forwarded-Proto": "https",
+            "User-Agent": "goji-panel/1",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:400]
+            if exc.code in (401, 403):
+                raise ApiError(f"{method} {path}: HTTP {exc.code} - token rejected or lacks scope. {detail}")
+            raise ApiError(f"{method} {path}: HTTP {exc.code} {detail}")
+        except (urllib.error.URLError, OSError) as exc:
+            raise ApiError(f"{method} {path}: {exc}")
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            raise ApiError(f"{method} {path}: the answer is not JSON (is --url the panel address?)")
+
+    def get(self, path):
+        return self.call("GET", path)["response"]
+
+
+def load_profile(xray_port, xpath):
+    with open(PROFILE_FILE, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    inbound = cfg["inbounds"][0]
+    inbound["port"] = xray_port
+    inbound["streamSettings"]["xhttpSettings"]["path"] = xpath
+    return cfg
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def find_inbound(profile, tag):
+    for ib in profile.get("inbounds", []):
+        if ib.get("tag") == tag:
+            return ib
+    return None
+
+
+def sync(args, token):
+    panel = Panel(args.url, token)
+    dry = args.dry_run
+    desired = load_profile(args.xray_port, args.path)
+    tag = desired["inbounds"][0]["tag"]
+
+    # ---- config profile
+    profiles = panel.get("/api/config-profiles")["configProfiles"]
+    prof = next((p for p in profiles if p["name"] == args.profile_name), None)
+    if prof is None:
+        log(f"[*] profile '{args.profile_name}': creating")
+        if dry:
+            prof = {"uuid": "(new)", "inbounds": [{"uuid": "(new)", "tag": tag}], "config": desired}
+        else:
+            prof = panel.call("POST", "/api/config-profiles", {"name": args.profile_name, "config": desired})["response"]
+        log("[+] profile created")
+    elif prof.get("config") == desired:
+        log(f"[+] profile '{args.profile_name}': already up to date")
+    elif args.overwrite_profile:
+        log(f"[*] profile '{args.profile_name}': differs from the Goji profile, overwriting (--panel-overwrite-profile)")
+        if not dry:
+            prof = panel.call("PATCH", "/api/config-profiles", {"uuid": prof["uuid"], "config": desired})["response"]
+        log("[+] profile updated")
+    else:
+        log(f"[!] profile '{args.profile_name}' exists and differs from the Goji profile; keeping it as is "
+            "(use --panel-overwrite-profile to replace its config)")
+    inbound = find_inbound(prof, tag)
+    if inbound is None:
+        raise ApiError(f"profile '{args.profile_name}' has no inbound with tag '{tag}'")
+    live_cfg = prof.get("config") if isinstance(prof.get("config"), dict) else desired
+    live_port = (live_cfg.get("inbounds") or [{}])[0].get("port")
+    if live_port != args.xray_port:
+        log(f"[!] the existing profile listens on port {live_port}, but nginx will proxy to {args.xray_port}: "
+            "re-run with --xray-port or --panel-overwrite-profile")
+
+    # ---- node
+    node = None
+    nodes = panel.get("/api/nodes")
+    if args.node:
+        node = next((n for n in nodes if args.node in (n["name"], n["uuid"])), None)
+        if node is None:
+            raise ApiError(f"node '{args.node}' not found in the panel")
+    else:
+        addrs = {a.lower() for a in args.node_address if a}
+        cand = [n for n in nodes if n["address"].lower() in addrs]
+        if len(cand) == 1:
+            node = cand[0]
+        elif len(cand) > 1:
+            names = ", ".join(n["name"] for n in cand)
+            raise ApiError(f"several nodes match this server ({names}); choose one with --panel-node")
+    if node is None:
+        log("[!] no node with this server's address found in the panel; the profile/host are ready, "
+            "assign the profile to the node manually (or pass --panel-node NAME)")
+    else:
+        active = node["configProfile"]["activeConfigProfileUuid"]
+        active_ib = {i["uuid"] for i in node["configProfile"]["activeInbounds"]}
+        if active == prof["uuid"] and inbound["uuid"] in active_ib:
+            log(f"[+] node '{node['name']}': profile already active")
+        else:
+            log(f"[*] node '{node['name']}': switching the active profile "
+                f"(was {active or 'none'}) - Xray on the node will restart")
+            if not dry:
+                panel.call("PATCH", "/api/nodes", {"uuid": node["uuid"], "configProfile": {
+                    "activeConfigProfileUuid": prof["uuid"], "activeInbounds": [inbound["uuid"]]}})
+            log("[+] node profile switched")
+
+    # ---- host
+    remark = args.host_remark or f"Goji {args.domain}"
+    fields = {
+        "remark": remark, "address": args.domain, "port": 443, "path": args.path, "sni": args.domain,
+        "alpn": "h2", "fingerprint": "firefox", "securityLayer": "TLS", "isDisabled": False,
+        "inbound": {"configProfileUuid": prof["uuid"], "configProfileInboundUuid": inbound["uuid"]},
+    }
+    hosts = panel.get("/api/hosts")
+    host = next((h for h in hosts if h["remark"] == remark), None) or next(
+        (h for h in hosts if h["address"].lower() == args.domain and h["port"] == 443 and h.get("path") == args.path), None)
+    nodes_field = sorted(set((host or {}).get("nodes", [])) | ({node["uuid"]} if node else set()))
+    if nodes_field:
+        fields["nodes"] = nodes_field
+    if host is None:
+        log(f"[*] host '{remark}': creating")
+        if not dry:
+            host = panel.call("POST", "/api/hosts", fields)["response"]
+        log("[+] host created")
+    else:
+        changed = {k: v for k, v in fields.items()
+                   if (sorted(host.get(k) or []) != v if k == "nodes" else host.get(k) != v)}
+        if not changed:
+            log(f"[+] host '{host['remark']}': already up to date")
+        else:
+            log(f"[*] host '{host['remark']}': updating {', '.join(sorted(changed))}")
+            if not dry:
+                panel.call("PATCH", "/api/hosts", {"uuid": host["uuid"], **fields})
+            log("[+] host updated")
+
+    # ---- squads (users only receive hosts of inbounds that are in their internal squad)
+    if args.squad:
+        squads = panel.get("/api/internal-squads")["internalSquads"]
+        for name in args.squad:
+            sq = next((s for s in squads if s["name"] == name), None)
+            if sq is None:
+                log(f"[!] internal squad '{name}' not found - skipped")
+                continue
+            have = [i["uuid"] for i in sq["inbounds"]]
+            if inbound["uuid"] in have:
+                log(f"[+] squad '{name}': inbound already included")
+                continue
+            log(f"[*] squad '{name}': adding the inbound (existing inbounds are kept)")
+            if not dry:
+                panel.call("PATCH", "/api/internal-squads", {"uuid": sq["uuid"], "inbounds": have + [inbound["uuid"]]})
+            log("[+] squad updated")
+    else:
+        log("[i] no --panel-squad given: users get this host only after the inbound is added to an internal squad")
+    if dry:
+        log("[i] dry run: nothing was changed")
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="goji-panel", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("sync", help="create/update profile, node assignment and host")
+    s.add_argument("--url", required=True, help="panel address, e.g. https://panel.example.com")
+    s.add_argument("--domain", required=True)
+    s.add_argument("--xray-port", type=int, default=10443)
+    s.add_argument("--path", default="/api/v2/telemetry/")
+    s.add_argument("--node", default="", help="node name or uuid (default: match by --node-address)")
+    s.add_argument("--node-address", action="append", default=[], help="address(es) the node is registered with")
+    s.add_argument("--profile-name", default="Goji XHTTP-TLS")
+    s.add_argument("--host-remark", default="")
+    s.add_argument("--squad", action="append", default=[], help="internal squad name to add the inbound to (repeatable)")
+    s.add_argument("--overwrite-profile", action="store_true")
+    s.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args(argv)
+    token = os.environ.get("GOJI_PANEL_TOKEN", "").strip()
+    if not token:
+        print("GOJI_PANEL_TOKEN is not set", file=sys.stderr)
+        return 1
+    args.domain = args.domain.lower()
+    if not urllib.parse.urlparse(args.url).scheme in ("http", "https"):
+        print("--url must start with http:// or https://", file=sys.stderr)
+        return 1
+    try:
+        return sync(args, token)
+    except ApiError as exc:
+        print(f"[x] {exc}", file=sys.stderr)
+        return 1
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"[x] unexpected answer or local error: {exc!r}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+PYEOF
+  chmod 755 /usr/local/sbin/goji-panel
+}
+
+panel_sync() {
+  [[ -n "$PANEL_URL" ]] || return 0
+  if [[ -z "$PANEL_TOKEN" ]]; then
+    warn "panel step skipped: no API token (GOJI_PANEL_TOKEN). Later: GOJI_PANEL_TOKEN=... goji-panel sync --url $PANEL_URL --domain $DOMAIN"
+    return 0
+  fi
+  command -v python3 >/dev/null || { warn "python3 is missing — panel step skipped"; return 0; }
+  install_panel_tool
+  local args=(sync --url "$PANEL_URL" --domain "$DOMAIN" --xray-port "$XRAY_PORT" --path "$XPATH"
+              --profile-name "$PANEL_PROFILE" --node-address "$DOMAIN" --node-address "${MY_IP:-}" --node-address "${DNS_IP:-}")
+  [[ -z "$PANEL_NODE" ]] || args+=(--node "$PANEL_NODE")
+  [[ -z "$PANEL_HOST" ]] || args+=(--host-remark "$PANEL_HOST")
+  [[ $PANEL_OVERWRITE -eq 0 ]] || args+=(--overwrite-profile)
+  local sq
+  for sq in "${PANEL_SQUADS[@]}"; do args+=(--squad "$sq"); done
+  info "Configuring the Remnawave panel ($PANEL_URL)"
+  if GOJI_PANEL_TOKEN="$PANEL_TOKEN" /usr/local/sbin/goji-panel "${args[@]}"; then
+    ok "panel configured: profile, node and host"
+  else
+    warn "panel configuration failed — do it by hand (INSTALL.md) or fix the cause and run: bash install.sh --resume"
+  fi
+}
+
 # helper for the post-install command; written by install_check_command below
 install_check_command() {
   {
@@ -1373,6 +1690,7 @@ else
   info "Hardening skipped (--skip-hardening)"
 fi
 install_check_command
+panel_sync
 
 # ---------------------------------------------------------------- wait for :443
 # Enable nginx on 443 only when the XHTTP profile is really active: Xray listens
