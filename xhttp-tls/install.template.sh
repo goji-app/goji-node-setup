@@ -218,6 +218,11 @@ cat > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh <<'EOF'
 systemctl reload nginx
 EOF
 chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+if certbot renew --cert-name "$DOMAIN" --dry-run >/dev/null 2>&1; then
+  ok "certbot renew --dry-run passed — automatic renewal works"
+else
+  warn "certbot renew --dry-run failed — check port 80 and: certbot renew --dry-run"
+fi
 
 # ---------------------------------------------------------------- remnawave node
 if [[ $SKIP_NODE -eq 0 ]]; then
@@ -254,7 +259,17 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro
 EOF
   chmod 600 "$NODE_DIR/docker-compose.yml"
-  (cd "$NODE_DIR" && docker compose pull -q && docker compose up -d) >/dev/null
+  (cd "$NODE_DIR" && docker compose pull -q) >/dev/null
+  # Pin the pulled image by digest so a later "up" cannot silently change versions.
+  NODE_IMAGE=$(cd "$NODE_DIR" && docker compose config --images | head -1)
+  NODE_DIGEST=$(docker image inspect "$NODE_IMAGE" --format '{{index .RepoDigests 0}}' 2>/dev/null || true)
+  if [[ $NODE_DIGEST =~ ^[^[:space:]@]+@sha256:[[:xdigit:]]{64}$ ]]; then
+    sed -i "s|image: remnawave/node:latest|image: $NODE_DIGEST|" "$NODE_DIR/docker-compose.yml"
+    ok "Node image pinned: $NODE_DIGEST"
+  else
+    warn "Could not read the image digest — compose keeps remnawave/node:latest"
+  fi
+  (cd "$NODE_DIR" && docker compose up -d) >/dev/null
 
   for ((i = 0; i < 30; i++)); do
     ss -Hltn "sport = :$NODE_PORT" | grep -q . && break
