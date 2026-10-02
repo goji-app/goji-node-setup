@@ -167,6 +167,15 @@ server {
 EOF
 rm -f "$CONF"
 nginx -t -q
+# A previous setup may have masked nginx ("Unit file ... is masked"): unmask it,
+# otherwise enable/start fail. Only /dev/null symlinks and empty override files are removed.
+unit=/etc/systemd/system/nginx.service
+if [[ -L $unit && $(readlink "$unit") == /dev/null ]] || [[ -f $unit && ! -s $unit ]]; then
+  warn "nginx.service was masked — unmasking"
+  rm -f "$unit"
+fi
+systemctl unmask nginx.service >/dev/null 2>&1 || true
+systemctl daemon-reload
 systemctl enable --now nginx >/dev/null
 systemctl reload nginx
 
