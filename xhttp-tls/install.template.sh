@@ -12,7 +12,8 @@
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
 #                            [--upgrade-os|--no-upgrade-os]
-#   bash install.sh --check | --settings | --uninstall | --resume | --version
+#   bash install.sh --check | --fix | --settings | --uninstall | --resume | --version
+#   --fix: найти ошибки и исправить безопасные автоматически (goji-node fix [--dry-run] — то же без переустановки)
 # После установки: goji-node — меню проверки, профиль для Remnawave, смена заглушки.
 #
 # Переустанавливает Remnawave Node (docker, /opt/remnanode), спрашивая SECRET_KEY и т. д.
@@ -47,6 +48,7 @@ PANEL_PROFILE="Goji XHTTP-TLS"
 PROFILE_SHOWN=0
 RESUME=0
 CHECK=0
+FIX=0
 SETTINGS=0
 UNINSTALL=0
 ARGC=$#
@@ -104,7 +106,14 @@ goji_tpl_desc() {
 gjc_why443() {
   local code=$1 l err
   l=$(ss -Hltnp 'sport = :443' 2>/dev/null | head -1)
-  if [[ -z $l ]]; then echo "на :443 никто не слушает (nginx не включил TLS-фронт: см. nginx -t и journalctl -u nginx)"; return; fi
+  if [[ -z $l ]]; then
+    if ! ss -Hltn "sport = :$GOJI_XRAY_PORT" 2>/dev/null | grep -q .; then
+      echo "TLS-фронт ещё не включён: профиль XHTTP не применён в Remnawave (goji-node → п. 8, затем goji-node fix)"
+    else
+      echo "на :443 никто не слушает, хотя профиль XHTTP активен (исправить: goji-node fix)"
+    fi
+    return
+  fi
   if ! grep -q nginx <<< "$l"; then echo "порт :443 занят не nginx: $(grep -o 'users:.*' <<< "$l" | head -1)"; return; fi
   if [[ -n $code && $code != 000 ]]; then echo "HTTP $code"; return; fi
   err=$(curl -sS -o /dev/null --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>&1 | tail -1)
@@ -134,7 +143,11 @@ gjc_web() {
 
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>/dev/null || true)
   if [[ $code == 200 ]]; then gj_row ok "HTTPS :443, сайт-заглушка" "HTTP 200"; else
-    gj_row fail "HTTPS :443, сайт-заглушка" "$(gjc_why443 "$code")"; GJ_FAIL=1
+    if ! ss -Hltn 'sport = :443' 2>/dev/null | grep -q . && ! ss -Hltn "sport = :$GOJI_XRAY_PORT" 2>/dev/null | grep -q .; then
+      gj_row warn "HTTPS :443, сайт-заглушка" "$(gjc_why443 "$code")"; GJ_PENDING=1
+    else
+      gj_row fail "HTTPS :443, сайт-заглушка" "$(gjc_why443 "$code")"; GJ_FAIL=1
+    fi
   fi
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/goji-check-nope" 2>/dev/null || true)
   if [[ $code == 404 ]]; then gj_row ok "Неизвестный путь" "HTTP 404"; else gj_row warn "Неизвестный путь" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code"), ожидался 404"; fi
@@ -222,6 +235,133 @@ goji_check() {
     all|*)    gjc_web; gjc_node; gjc_system; gjc_security ;;
   esac
   gjc_summary
+}
+
+# ---- автоисправление ---------------------------------------------------------------------
+# gjf_do <описание> <команда...>: выполнить исправление и показать результат.
+gjf_do() {
+  local d=$1; shift
+  if (( GJF_DRY )); then gj_row warn "$d" "будет выполнено (--dry-run)"; return 0; fi
+  if "$@" >/dev/null 2>&1; then gj_row ok "$d" "исправлено"; GJF_FIXED=$((GJF_FIXED + 1)); return 0; fi
+  gj_row fail "$d" "не удалось"; GJF_FAILED=$((GJF_FAILED + 1)); return 1
+}
+# gjf_manual <проблема> <что делать>: то, что скрипт сам менять не должен.
+gjf_manual() { gj_row fail "$1" "нужны ваши действия"; echo "      → $2"; GJF_MANUAL=$((GJF_MANUAL + 1)); }
+# gjf_resume <причина>: исправляется повторным проходом установки (install.sh --fix).
+gjf_resume() { gj_row warn "$1" "исправит повторный проход установки"; GJF_RESUME=1; }
+
+# goji_fix [--dry-run]: ищет известные проблемы и исправляет безопасные. Чужие сервисы,
+# SSH-доступ и данные ноды сам не меняет: для них печатает, что сделать.
+goji_fix() {
+  gjc_load || return 1
+  GJF_DRY=0; [[ ${1:-} == --dry-run ]] && GJF_DRY=1
+  GJF_FIXED=0; GJF_FAILED=0; GJF_MANUAL=0; GJF_RESUME=0
+  local installer=0 l days end errs xh=0 n tpl
+  declare -F install_templates >/dev/null && installer=1
+  gj_title "Автоисправление — $GOJI_DOMAIN$( ((GJF_DRY)) && echo ' (пробный запуск, ничего не меняется)')"
+
+  # 1. служебные файлы
+  if [[ ! -r $GOJI_SHARE/xray-node-profile.json ]] && declare -F install_profile_file >/dev/null; then
+    gjf_do "Файл профиля Remnawave" install_profile_file || true
+  fi
+  if [[ ! -d $GOJI_SHARE/templates ]] && (( installer )); then
+    gjf_do "Шаблоны сайтов-заглушек" install_templates "$GOJI_SHARE/templates" || true
+  fi
+
+  # 2. нода (до проверки профиля: после запуска контейнера Xray может подняться сам)
+  if [[ -n ${GOJI_NODE_PORT:-} ]] && command -v docker >/dev/null; then
+    if [[ "$(docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null)" != true ]]; then
+      if [[ -f /opt/remnanode/docker-compose.yml ]]; then
+        systemctl is-active --quiet docker || gjf_do "Служба docker" systemctl enable --now docker || true
+        gjf_do "Контейнер Remnawave Node" bash -c 'cd /opt/remnanode && docker compose up -d' || true
+        (( GJF_DRY )) || sleep 5
+      else
+        gjf_manual "Remnawave Node" "нет /opt/remnanode/docker-compose.yml — выполните install.sh --resume"
+      fi
+    fi
+  fi
+  ss -Hltn "sport = :$GOJI_XRAY_PORT" 2>/dev/null | grep -q . && xh=1
+
+  # 3. nginx
+  if ! nginx -t >/dev/null 2>&1; then
+    errs=$(nginx -t 2>&1 | grep -iE 'emerg|error' | head -2 | tr '\n' ' ')
+    if grep -q 'xhttp-' <<< "$errs"; then gjf_resume "Конфигурация nginx сломана ($errs)"
+    else gjf_manual "Конфигурация nginx" "${errs:-nginx -t сообщает об ошибке}— это не наш файл, исправьте вручную (nginx -t)"; fi
+  elif ! systemctl is-active --quiet nginx; then
+    gjf_do "nginx не был запущен" systemctl enable --now nginx || true
+  fi
+
+  # 4. сертификат
+  if [[ -f $GJ_LIVE/fullchain.pem ]]; then
+    end=$(openssl x509 -enddate -noout -in "$GJ_LIVE/fullchain.pem" 2>/dev/null | cut -d= -f2)
+    days=$(( ( $(date -d "$end" +%s 2>/dev/null || echo 0) - $(date +%s) ) / 86400 ))
+    if (( days <= 14 )); then
+      if systemctl is-active --quiet nginx && command -v certbot >/dev/null; then
+        if gjf_do "Сертификат ($( ((days > 0)) && echo "осталось $days дн." || echo истёк)): продление" bash -c "certbot renew --cert-name '$GOJI_DOMAIN' --force-renewal && systemctl reload nginx"; then :; else
+          echo "      → проверьте, что A-запись $GOJI_DOMAIN указывает на этот сервер и порт 80 открыт (certbot renew --dry-run)"
+        fi
+      else
+        gjf_manual "Сертификат ($( ((days > 0)) && echo "осталось $days дн." || echo истёк))" "nginx не работает или нет certbot: сначала исправьте nginx, затем goji-node fix"
+      fi
+    fi
+  else
+    gjf_resume "Сертификат Let's Encrypt не найден"
+  fi
+  if systemctl list-unit-files certbot.timer >/dev/null 2>&1 && systemctl list-unit-files certbot.timer | grep -q certbot.timer \
+     && ! systemctl is-active --quiet certbot.timer; then
+    gjf_do "Автопродление (certbot.timer)" systemctl enable --now certbot.timer || true
+  fi
+
+  # 5. порт 443 и профиль XHTTP
+  l=$(ss -Hltnp 'sport = :443' 2>/dev/null | head -1)
+  if [[ -n $l ]] && ! grep -q nginx <<< "$l"; then
+    gjf_manual "Порт 443 занят не nginx: $(grep -o 'users:.*' <<< "$l" | head -1)" \
+      "остановите этот сервис или перенесите его на другой порт (например 8443), затем goji-node fix. Чужой сервис скрипт не трогает."
+  elif (( ! xh )); then
+    gj_row warn "Профиль XHTTP" "не применён в Remnawave: на 127.0.0.1:$GOJI_XRAY_PORT никто не слушает"
+    echo "      → покажите профиль (goji-node → п. 8), вставьте его в Remnawave, назначьте ноде, затем goji-node fix"
+    GJF_MANUAL=$((GJF_MANUAL + 1))
+  elif [[ -z $l ]]; then
+    gjf_resume "TLS-фронт nginx не включён (профиль XHTTP активен, порт 443 свободен)"
+  fi
+
+  # 6. сайт-заглушка
+  if [[ ! -f $GOJI_WEBROOT/index.html ]]; then
+    tpl=$(cat "$GOJI_WEBROOT/.template" 2>/dev/null || true)
+    if [[ -d $GOJI_SHARE/templates ]]; then
+      [[ -n $tpl && -d $GOJI_SHARE/templates/$tpl ]] || tpl=$(ls "$GOJI_SHARE/templates" | shuf -n 1)
+      gjf_do "Сайт-заглушка пуст: разворачиваю «$tpl»" goji_deploy_decoy "$tpl" "$GOJI_SHARE/templates" || true
+    else
+      gjf_resume "Сайт-заглушка пуст и нет шаблонов"
+    fi
+  fi
+
+  # 7. защита (только если выбрано при установке)
+  if [[ ${GOJI_HARDEN:-1} -eq 1 ]]; then
+    if command -v fail2ban-client >/dev/null && ! fail2ban-client ping >/dev/null 2>&1; then
+      gjf_do "Fail2ban не отвечал" systemctl enable --now fail2ban || true
+    fi
+    if command -v ufw >/dev/null && ! ufw status 2>/dev/null | grep -q "Status: active"; then
+      gjf_resume "UFW выключен (правила и доступ по SSH безопасно задаёт установщик)"
+    fi
+    if [[ -f /etc/systemd/system/goji-two-way-ping.service ]] && ! nft list table inet goji_privacy >/dev/null 2>&1; then
+      gjf_do "Защита от ping не загружена" systemctl restart goji-two-way-ping.service || true
+    fi
+    if [[ ${GOJI_GUARD:-0} -eq 1 && -x /usr/local/sbin/goji-guard ]] && ! nft list table inet goji_guard >/dev/null 2>&1; then
+      gjf_do "Traffic Control не загружен" /usr/local/sbin/goji-guard update || true
+    fi
+  fi
+
+  echo "----------------------------------------------------------------"
+  echo "Автоисправление: исправлено $GJF_FIXED, не удалось $GJF_FAILED, нужны ваши действия $GJF_MANUAL$( ((GJF_RESUME)) && echo ', нужен повторный проход установки')."
+  if (( GJF_RESUME && ! GJF_DRY )) && (( ! installer )); then
+    echo "Для оставшегося запустите:  bash install.sh --fix"
+  fi
+  if (( GJF_FIXED > 0 && GJF_RESUME == 0 && ! GJF_DRY )); then
+    echo; echo "Повторная проверка:"
+    goji_check all || true
+  fi
+  (( GJF_FAILED == 0 && GJF_MANUAL == 0 ))
 }
 
 gj_kv() { local pad=$((32 - ${#1})); (( pad < 1 )) && pad=1; printf '  %s%*s %s\n' "$1" "$pad" "" "$2"; }
@@ -527,6 +667,7 @@ goji_menu() {
   9) Сменить сайт-заглушку
  10) Проверить автопродление сертификата (certbot --dry-run)
  11) Удалить компоненты установки
+ 12) Найти и исправить ошибки автоматически
   0) Выход
 MENU
     read -r -p "Пункт: " c || return 0
@@ -542,6 +683,7 @@ MENU
       9) goji_decoy ;;
       10) certbot renew --dry-run ;;
       11) goji_uninstall; [[ -r $GOJI_ETC/install.conf ]] || return 0 ;;
+      12) goji_fix || true ;;
       0|q|"") return 0 ;;
       *) echo "Нет такого пункта." ;;
     esac
@@ -552,12 +694,13 @@ goji_main() {
   case "${1:-menu}" in
     menu)         goji_menu ;;
     check)        shift; goji_check "$@" ;;
+    fix)          shift; goji_fix "$@" ;;
     settings)     goji_show_settings ;;
     uninstall)    shift; goji_uninstall "$@" ;;
     ports)        goji_ports ;;
     profile)      goji_show_profile ;;
     decoy)        shift; goji_decoy "$@" ;;
-    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | settings | uninstall [--yes] [компонент...|all] | ports | profile | decoy [имя|random]" ;;
+    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | fix [--dry-run] | settings | uninstall [--yes] [компонент...|all] | ports | profile | decoy [имя|random]" ;;
     *)            echo "Неизвестная команда: $1 (goji-node --help)" >&2; return 1 ;;
   esac
 }
@@ -580,11 +723,12 @@ for a in "$@"; do
     --version) echo "goji-node-setup $VERSION"; exit 0 ;;
     --resume)  RESUME=1 ;;
     --check)   CHECK=1 ;;
+    --fix)     FIX=1; RESUME=1 ;;
     --settings) SETTINGS=1 ;;
     --uninstall) UNINSTALL=1 ;;
   esac
 done
-if [[ $RESUME -eq 1 ]]; then
+load_resume() {
   [[ -r $CONF_FILE ]] || die "--resume: нет сохранённой установки ($CONF_FILE); сначала запустите install.sh обычным образом"
   # shellcheck disable=SC1090
   . "$CONF_FILE"
@@ -594,7 +738,8 @@ if [[ $RESUME -eq 1 ]]; then
   PANEL_PROFILE=${GOJI_PANEL_PROFILE:-$PANEL_PROFILE}
   read -ra ADMIN_IPS <<< "${GOJI_ADMIN_IPS:-}"
   read -ra EXTRA_PORTS <<< "${GOJI_EXTRA_PORTS:-}"
-fi
+}
+[[ $RESUME -ne 1 ]] || load_resume
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -616,8 +761,8 @@ while [[ $# -gt 0 ]]; do
     --no-traffic-control) GUARD_MODE=0; shift ;;
     --upgrade-os)    UPGRADE_MODE=1; shift ;;
     --no-upgrade-os) UPGRADE_MODE=0; shift ;;
-    --resume|--check|--settings|--uninstall) shift ;;
-    -h|--help)   sed -n '2,21p' "$0"; exit 0 ;;
+    --resume|--check|--fix|--settings|--uninstall) shift ;;
+    -h|--help)   sed -n '2,22p' "$0"; exit 0 ;;
     -*)          die "неизвестный параметр: $1" ;;
     *)           DOMAIN="$1"; shift ;;
   esac
@@ -625,6 +770,14 @@ done
 
 [[ $EUID -eq 0 ]] || die "запустите от root"
 if [[ $CHECK -eq 1 ]]; then rc=0; goji_check || rc=$?; exit $rc; fi
+if [[ $FIX -eq 1 ]]; then
+  # Простые исправления делаются сразу; если нужен повторный проход установки
+  # (TLS-фронт, сертификат, UFW), он выполняется ниже в режиме --resume с сохранёнными настройками.
+  rc=0; goji_fix || rc=$?
+  (( GJF_RESUME )) || exit $rc
+  WAIT=0   # не ждать применения профиля: всё, что зависит от панели, goji_fix уже описал
+  info "Выполняю повторный проход установки (--resume) для исправления оставшегося"
+fi
 if [[ $SETTINGS -eq 1 ]]; then goji_show_settings; exit $?; fi
 if [[ $UNINSTALL -eq 1 ]]; then goji_uninstall; exit $?; fi
 
@@ -640,6 +793,7 @@ if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
   3) Открыть меню goji-node (проверки, профиль Remnawave, смена заглушки)
   4) Переустановить / изменить установку (вопросы заново)
   5) Удалить компоненты установки (выбор: сайт, сертификат, нода, защита, тюнинг…)
+  6) Найти и исправить ошибки автоматически
   0) Выход
 MENU
     read -r -p "Пункт: " __m </dev/tty || exit 0
@@ -649,6 +803,8 @@ MENU
       3) goji_menu </dev/tty ;;
       4) break ;;
       5) goji_uninstall || true; [[ -r $CONF_FILE ]] || exit 0 ;;
+      6) rc=0; goji_fix || rc=$?
+         if (( GJF_RESUME )); then RESUME=1; load_resume; info "Выполняю повторный проход установки (--resume)"; break; fi ;;
       0|q|"") exit 0 ;;
       *) echo "Нет такого пункта." ;;
     esac
@@ -1842,7 +1998,7 @@ install_check_command() {
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS
     declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_why443 gjc_web gjc_node gjc_system gjc_security gjc_summary \
-      goji_check gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
+      goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
