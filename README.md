@@ -57,16 +57,17 @@ flowchart LR
 
 | Шаг | Действие |
 |---|---|
-| 1. Вопросы | домен, `SECRET_KEY`, порт API, IP панели, e-mail. Работает и через `curl … \| bash`: ввод читается с терминала |
+| 1. Вопросы | домен, `SECRET_KEY`, порт API, IP панели, e-mail, **выбор сайта-заглушки из меню** (если не задан `--template`). Работает и через `curl … \| bash`: ввод читается с терминала |
 | 2. Пакеты | `nginx`, `certbot`, `curl` и зависимости из репозиториев дистрибутива |
 | 3. Проверка DNS | предупреждает, если домен указывает не на этот сервер, иначе сертификат не выпустится |
-| 4. Заглушка | разворачивает один из шаблонов сайта в `/var/www/decoy` |
+| 4. Заглушка | разворачивает выбранный шаблон сайта в `/var/www/decoy`; все шаблоны остаются в `/usr/share/goji-node/templates` для смены заглушки без переустановки |
 | 5. nginx :80 | отвечает на проверку Let's Encrypt, всё остальное перенаправляет на HTTPS; при активном `ufw` открывает 80/443 |
 | 6. Сертификат | выпуск через `webroot` и автопродление с перезагрузкой nginx, после чего выполняется проверка `certbot renew --dry-run`. Если папка сертификата осталась без конфигурации продления, её старые файлы переносятся в `/root/letsencrypt-backup-…` |
 | 7. Remnawave Node | ставит Docker при необходимости, сохраняет старый `docker-compose.yml` в `.bak-<дата>`, пишет новый, скачивает образ `remnawave/node:latest`, **закрепляет его по digest** (`image: remnawave/node@sha256:…`) и запускает |
 | 8. Ожидание профиля | **ждёт**, пока в панели профиль ноды переключат на XHTTP (Xray слушает `127.0.0.1:10443`, порт 443 свободен). До этого nginx на 443 не включается, а старый профиль продолжает работать |
 | 9. nginx :443 | включает TLS-фронт |
 | 10. Самопроверка | заглушка отвечает кодом 200, Xray слушает внутренний порт |
+| 11. Профиль для Remnawave | выводит готовый JSON профиля (с вашими портом и путём) для копирования в Remnawave → Config Profiles; он же сохраняется в `/etc/goji-node/remnawave-profile.json`. Если профиль ещё не применён, JSON выводится до ожидания, чтобы его можно было вставить сразу |
 
 Скрипт можно запускать повторно: уже выпущенный и автопродляемый сертификат он не трогает, установленная заглушка остаётся прежней.
 
@@ -81,14 +82,20 @@ flowchart LR
 | `--panel-ip` | — | IP панели; для `NODE_PORT` в `ufw` создаётся правило только для него |
 | `--xray-port` | `10443` | внутренний порт Xray на `127.0.0.1` |
 | `--path` | `/api/v2/telemetry/` | путь XHTTP, начинается и заканчивается на `/` |
-| `--template` | `random` | заглушка: `random`, `analytics`, `blog`, `docs`, `saas` |
+| `--template` | меню / `random` | заглушка: `random`, `analytics`, `blog`, `docs`, `saas`, `freelancer`, `resume`, `creative`, `grayscale`, `new-age`, `agency`. Без флага на терминале показывается меню выбора, без терминала берётся случайная |
 | `--wait` | `900` | сколько секунд ждать переключения профиля в панели |
 | `--skip-node` | — | не трогать Remnawave Node, настроить только nginx и сертификат |
 | `--skip-hardening` | — | не применять тюнинг и защиту (BBR/fq, tc, ZRAM, UFW, Fail2ban, ICMP) |
 | `--icmp-drop` | — | полностью блокировать входящий ping (по умолчанию лимит 5/сек) |
 | `--traffic-control` / `--no-traffic-control` | спросить | блокировка сетей сканеров по публичным спискам (nftables), по желанию |
 | `--admin-ip` | IP SSH-сессии | IP администратора, исключённый из блокировок Traffic Control, флаг можно повторять |
-| `--check` | — | отчёт «компонент — статус» (то же: `goji-node-check`) |
+| `--upgrade-os` / `--no-upgrade-os` | спросить | обновить пакеты текущего релиза ОС (`apt upgrade`) перед установкой; план с удалениями отклоняется |
+| `--panel-url` | — | адрес панели Remnawave: профиль, нода и хост настроятся через API (токен: переменная `GOJI_PANEL_TOKEN`) |
+| `--panel-node` / `--panel-profile` / `--panel-host` | авто / `Goji XHTTP-TLS` / `Goji <домен>` | имя ноды, профиля и хоста в панели |
+| `--panel-squad` | — | добавить inbound в internal squad (повторяемый) |
+| `--panel-overwrite-profile` | — | заменить конфиг существующего профиля с тем же именем |
+| `--no-panel` | — | не настраивать панель |
+| `--check` | — | отчёт «компонент — статус» (то же: `goji-node check`) |
 | `--resume` | — | повторить установку с сохранёнными параметрами |
 | `--version` | — | версия установщика |
 | `--ssh-port` | определяется | порт SSH для UFW и Fail2ban |
@@ -135,8 +142,14 @@ flowchart LR
 | `blog` | простой блог | [westtle/simple-blog-template](https://github.com/westtle/simple-blog-template), MIT |
 | `docs` | одностраничный сайт документации | [JMcrafter26/tiny-docs](https://github.com/JMcrafter26/tiny-docs), MIT |
 | `saas` | лендинг SaaS-продукта | [hannah-wright/saas-landing-page-template](https://github.com/hannah-wright/saas-landing-page-template), MIT |
+| `freelancer` | портфолио фрилансера с галереей работ | [StartBootstrap/startbootstrap-freelancer](https://github.com/StartBootstrap/startbootstrap-freelancer), MIT |
+| `resume` | страница-резюме разработчика | [StartBootstrap/startbootstrap-resume](https://github.com/StartBootstrap/startbootstrap-resume), MIT |
+| `creative` | яркий лендинг креативной студии | [StartBootstrap/startbootstrap-creative](https://github.com/StartBootstrap/startbootstrap-creative), MIT |
+| `grayscale` | тёмный минималистичный лендинг | [StartBootstrap/startbootstrap-grayscale](https://github.com/StartBootstrap/startbootstrap-grayscale), MIT |
+| `new-age` | лендинг мобильного приложения | [StartBootstrap/startbootstrap-new-age](https://github.com/StartBootstrap/startbootstrap-new-age), MIT |
+| `agency` | корпоративный сайт агентства: услуги, команда, портфолио | [StartBootstrap/startbootstrap-agency](https://github.com/StartBootstrap/startbootstrap-agency), MIT |
 
-Выбор по умолчанию случайный, при повторном запуске сохраняется выбранный шаблон. Лицензии сторонних шаблонов лежат рядом с ними и отдаются как `LICENSE.txt`.
+Заглушку можно выбрать в меню при установке или флагом `--template`; без терминала выбирается случайная. При повторном запуске сохраняется выбранный шаблон, сменить его позже: `goji-node decoy` (меню) или `goji-node decoy <имя>`. Шаблоны Start Bootstrap взяты из `dist/` репозиториев, изображения пересжаты, рекламные тексты и ссылки на сайт-источник заменены, скрипт стороннего сервиса форм удалён. Часть шаблонов подгружает Bootstrap-скрипт, шрифты и иконки с публичных CDN (jsDelivr, Google Fonts, Font Awesome), как и оригиналы. Лицензии сторонних шаблонов лежат рядом с ними и отдаются как `LICENSE.txt`.
 
 Свой шаблон: положите папку в `xhttp-tls/templates/<имя>/` и выполните `python xhttp-tls/build.py`. Он заново встроит шаблоны в `install.sh`, чтобы скрипт оставался одним самодостаточным файлом.
 

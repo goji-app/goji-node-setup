@@ -17,5 +17,6 @@ with tarfile.open(fileobj=buf, mode="w:gz") as t:
                     t.addfile(ti, fh)
 b64 = base64.b64encode(buf.getvalue()).decode()
 src = open(os.path.join(here, "install.template.sh"), encoding="utf-8").read()
-open(os.path.join(here, "install.sh"), "w", encoding="utf-8", newline="\n").write(src.replace("__TEMPLATES_B64__", b64))
+prof = base64.b64encode(open(os.path.join(here, "xray-node-profile.json"), "rb").read()).decode()
+open(os.path.join(here, "install.sh"), "w", encoding="utf-8", newline="\n").write(src.replace("__TEMPLATES_B64__", b64).replace("__PROFILE_B64__", prof))
 print(f"install.sh built, templates archive {len(buf.getvalue())//1024} KB")
