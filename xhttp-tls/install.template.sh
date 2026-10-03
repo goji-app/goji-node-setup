@@ -183,8 +183,9 @@ gjc_security() {
   if fail2ban-client ping >/dev/null 2>&1; then gj_row ok "Fail2ban" "работает (sshd, recidive)"; else gj_row warn "Fail2ban" "не отвечает"; fi
   local sshv
   sshv=$(sshd -T 2>/dev/null | awk '$1=="maxauthtries"{print $2}')
-  if [[ -f /etc/ssh/sshd_config.d/00-goji-hardening.conf && $sshv == 4 ]]; then
-    gj_row ok "SSH" "ограничения применены (способ входа не менялся)"
+  if [[ $sshv =~ ^[0-9]+$ ]] && (( sshv <= 4 )); then
+    if [[ -f /etc/ssh/sshd_config.d/00-goji-hardening.conf && $sshv == 4 ]]; then gj_row ok "SSH" "ограничения применены (способ входа не менялся)"
+    else gj_row ok "SSH" "действует MaxAuthTries $sshv (строже нашего 4), задано другим файлом sshd_config.d"; fi
   elif [[ ! -f /etc/ssh/sshd_config.d/00-goji-hardening.conf ]]; then
     gj_row warn "SSH" "файл 00-goji-hardening.conf отсутствует: шаг пропущен или откатен при установке (см. вывод установки; бэкапы в /var/backups/goji-node)"
   else
@@ -1329,8 +1330,16 @@ CONF
 
   if ! sshd -t 2>/dev/null; then ssh_rollback "$dropin" "$had" "$bk"; return 0; fi
   sshd -T > "$bk/sshd-after.txt"
+  local cur
   for kv in "maxauthtries 4" "logingracetime 30" "allowagentforwarding no" "permittunnel no" "x11forwarding no" "gatewayports no"; do
-    grep -qx "$kv" "$bk/sshd-after.txt" || { bad=1; warn "действующая настройка sshd отличается от '$kv' (приоритет у более раннего правила)"; }
+    k=${kv% *}; u=${kv#* }
+    cur=$(awk -v k="$k" '$1==k{print $2; exit}' "$bk/sshd-after.txt")
+    [[ "$cur" == "$u" ]] && continue
+    # более строгое числовое значение из другого файла (например MaxAuthTries 3) не мешает
+    if [[ $k == maxauthtries || $k == logingracetime ]] && [[ $cur =~ ^[0-9]+$ ]] && (( cur < u )); then
+      info "SSH: $k уже ограничен строже ($cur) другим файлом sshd_config.d — оставляю его значение"; continue
+    fi
+    bad=1; warn "действующая настройка sshd отличается от '$kv' (приоритет у более раннего правила)"
   done
   for k in port allowtcpforwarding passwordauthentication pubkeyauthentication permitrootlogin kbdinteractiveauthentication authenticationmethods; do
     if [[ "$(grep -E "^$k " "$bk/sshd-before.txt" || true)" != "$(grep -E "^$k " "$bk/sshd-after.txt" || true)" ]]; then
@@ -1864,18 +1873,28 @@ ready() { xhttp_up && ! foreign443; }
 if ! ready; then
   # nginx must not hold 443 while the old profile may still need it
   rm -f "$CONF"; systemctl reload nginx
-  warn "Профиль XHTTP ещё не активен (на 127.0.0.1:$XRAY_PORT никто не слушает)."
+  if foreign443; then
+    warn "Порт 443 занят не nginx: $(ss -Hltnp 'sport = :443' | head -1 | grep -o 'users:.*' | head -1)."
+    echo "    TLS-фронт nginx не сможет занять 443: остановите этот сервис или перенесите его на другой порт."
+  fi
+  if xhttp_up; then
+    ok "Профиль XHTTP активен (127.0.0.1:$XRAY_PORT слушает)."
+  else
+    warn "Профиль XHTTP ещё не активен (на 127.0.0.1:$XRAY_PORT никто не слушает)."
+  fi
   show_profile
-  echo "    Переключите профиль этой ноды в Remnawave на XHTTP"
-  echo "    (inbound 127.0.0.1:$XRAY_PORT, xhttp, path $XPATH) и обновите хост."
-  info "Жду профиль XHTTP до $WAIT с..."
+  if ! xhttp_up; then
+    echo "    Переключите профиль этой ноды в Remnawave на XHTTP"
+    echo "    (inbound 127.0.0.1:$XRAY_PORT, xhttp, path $XPATH) и обновите хост."
+  fi
+  info "Жду готовности (профиль XHTTP и свободный порт 443) до $WAIT с..."
   for ((i = 0; i < WAIT; i += 5)); do
     ready && break
     sleep 5
   done
   if ! ready; then
-    warn "Профиль XHTTP не появился. Старый профиль продолжает работать; TLS-фронт nginx ещё не включён."
-    echo "    После переключения профиля выполните:  bash install.sh --resume   (состояние: goji-node)"
+    warn "Условия не выполнены (профиль XHTTP / порт 443). Старый профиль продолжает работать; TLS-фронт nginx ещё не включён."
+    echo "    Когда профиль переключён и порт 443 свободен, выполните:  bash install.sh --resume   (состояние: goji-node)"
     exit 2
   fi
 fi
