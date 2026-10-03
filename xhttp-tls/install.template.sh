@@ -100,6 +100,17 @@ goji_tpl_desc() {
   esac
 }
 
+# Причина, по которой HTTPS на :443 не отвечает кодом 200 (для понятного отчёта).
+gjc_why443() {
+  local code=$1 l err
+  l=$(ss -Hltnp 'sport = :443' 2>/dev/null | head -1)
+  if [[ -z $l ]]; then echo "на :443 никто не слушает (nginx не включил TLS-фронт: см. nginx -t и journalctl -u nginx)"; return; fi
+  if ! grep -q nginx <<< "$l"; then echo "порт :443 занят не nginx: $(grep -o 'users:.*' <<< "$l" | head -1)"; return; fi
+  if [[ -n $code && $code != 000 ]]; then echo "HTTP $code"; return; fi
+  err=$(curl -sS -o /dev/null --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>&1 | tail -1)
+  echo "nginx слушает :443, но запрос не прошёл: ${err:-нет ответа}"
+}
+
 gjc_web() {
   local code end days
   gj_title "Сайт, сертификат и nginx — $GOJI_DOMAIN"
@@ -122,7 +133,9 @@ gjc_web() {
   fi
 
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>/dev/null || true)
-  if [[ $code == 200 ]]; then gj_row ok "HTTPS :443, сайт-заглушка" "HTTP 200"; else gj_row fail "HTTPS :443, сайт-заглушка" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code")"; GJ_FAIL=1; fi
+  if [[ $code == 200 ]]; then gj_row ok "HTTPS :443, сайт-заглушка" "HTTP 200"; else
+    gj_row fail "HTTPS :443, сайт-заглушка" "$(gjc_why443 "$code")"; GJ_FAIL=1
+  fi
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/goji-check-nope" 2>/dev/null || true)
   if [[ $code == 404 ]]; then gj_row ok "Неизвестный путь" "HTTP 404"; else gj_row warn "Неизвестный путь" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code"), ожидался 404"; fi
   if [[ -f $GOJI_WEBROOT/.template ]]; then gj_row ok "Заглушка" "$(cat "$GOJI_WEBROOT/.template") — $(goji_tpl_desc "$(cat "$GOJI_WEBROOT/.template")")"; else gj_row warn "Заглушка" "не определена"; fi
@@ -168,10 +181,14 @@ gjc_security() {
   if [[ ${GOJI_HARDEN:-1} -ne 1 ]]; then gj_row warn "Усиление защиты" "пропущено (--skip-hardening)"; return 0; fi
   if ufw status 2>/dev/null | grep -q "Status: active"; then gj_row ok "UFW" "включён, входящие закрыты по умолчанию"; else gj_row warn "UFW" "не включён"; fi
   if fail2ban-client ping >/dev/null 2>&1; then gj_row ok "Fail2ban" "работает (sshd, recidive)"; else gj_row warn "Fail2ban" "не отвечает"; fi
-  if [[ -f /etc/ssh/sshd_config.d/00-goji-hardening.conf ]] && sshd -T 2>/dev/null | grep -qx "maxauthtries 4"; then
+  local sshv
+  sshv=$(sshd -T 2>/dev/null | awk '$1=="maxauthtries"{print $2}')
+  if [[ -f /etc/ssh/sshd_config.d/00-goji-hardening.conf && $sshv == 4 ]]; then
     gj_row ok "SSH" "ограничения применены (способ входа не менялся)"
+  elif [[ ! -f /etc/ssh/sshd_config.d/00-goji-hardening.conf ]]; then
+    gj_row warn "SSH" "файл 00-goji-hardening.conf отсутствует: шаг пропущен или откатен при установке (см. вывод установки; бэкапы в /var/backups/goji-node)"
   else
-    gj_row warn "SSH" "ограничения не применены"
+    gj_row warn "SSH" "файл есть, но sshd применяет MaxAuthTries ${sshv:-?}: другое правило имеет приоритет (sshd -T | grep -i maxauth)"
   fi
   if nft list table inet goji_privacy >/dev/null 2>&1; then
     gj_row ok "Защита от ping" "echo-request: $(grep -qs 'MODE=drop' /etc/default/goji-two-way-ping && echo блок || echo 'лимит 5/с'), timestamp: блок"
@@ -1808,7 +1825,7 @@ install_check_command() {
     echo '#!/usr/bin/env bash'
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS
-    declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_web gjc_node gjc_system gjc_security gjc_summary \
+    declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_why443 gjc_web gjc_node gjc_system gjc_security gjc_summary \
       goji_check gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
