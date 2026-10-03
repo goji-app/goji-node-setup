@@ -10,7 +10,7 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/main/xhttp-tls/install.sh)
 ```
 
-Скрипт спросит домен, SECRET_KEY ноды, NODE_PORT, IP панели, e-mail и покажет меню выбора сайта-заглушки. Все сообщения на русском.
+Первым вопросом покажет меню выбора сайта-заглушки, затем спросит домен, SECRET_KEY ноды, NODE_PORT, IP панели и e-mail. Все сообщения на русском.
 Всё можно передать флагами: `install.sh <домен> --secret-key ... --node-port 2222 --panel-ip ... --email ... --template blog`
 
 Заглушка выбирается в меню (на терминале) или флагом `--template <имя>`; без терминала и без флага — случайная. Доступны: analytics, blog, docs, saas, freelancer, resume, creative, grayscale, new-age, agency. При повторном запуске выбранная заглушка сохраняется. Сменить позже: `goji-node decoy` (меню) или `goji-node decoy <имя|random>`; шаблоны хранятся в `/usr/share/goji-node/templates`. Источники и лицензии: `templates/README.md`. После правок в `templates/` — `python build.py`.
@@ -42,7 +42,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/mai
 
 ## Меню goji-node, проверка, продолжение, версия
 
-После установки доступна команда `goji-node` (от root): меню с пунктами — полная проверка настроек; отдельные проверки (сайт и сертификат, нода и Xray, система, защита); открытые порты и правила UFW; готовый профиль для Remnawave; смена сайта-заглушки; проверка автопродления сертификата (`certbot renew --dry-run`). Те же действия без меню: `goji-node check [web|node|system|security|all]`, `goji-node ports`, `goji-node profile`, `goji-node decoy [имя]`. Проверка помечает строки: ✓ — в порядке, ! — замечание, ✗ — ошибка.
+Если сервер уже настраивался этим скриптом, запуск `install.sh` без параметров на терминале сначала спрашивает, что сделать: проверить настройки сервера, показать установленные настройки (из `/etc/goji-node/install.conf`), открыть меню `goji-node` или переустановить заново (тогда в меню заглушки Enter оставляет текущую). Без меню: `bash install.sh --settings`.
+
+После установки доступна команда `goji-node` (от root): меню с пунктами — полная проверка настроек; установленные настройки (с чем ставился сервер); отдельные проверки (сайт и сертификат, нода и Xray, система, защита); открытые порты и правила UFW; готовый профиль для Remnawave; смена сайта-заглушки; проверка автопродления сертификата (`certbot renew --dry-run`). Те же действия без меню: `goji-node check [web|node|system|security|all]`, `goji-node settings`, `goji-node ports`, `goji-node profile`, `goji-node decoy [имя]`. Проверка помечает строки: ✓ — в порядке, ! — замечание, ✗ — ошибка.
 
 ```
 bash install.sh --version      # версия установщика

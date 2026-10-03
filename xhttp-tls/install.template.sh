@@ -12,7 +12,7 @@
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
 #                            [--upgrade-os|--no-upgrade-os]
-#   bash install.sh --check | --resume | --version
+#   bash install.sh --check | --settings | --resume | --version
 # После установки: goji-node — меню проверки, профиль для Remnawave, смена заглушки.
 #
 # Переустанавливает Remnawave Node (docker, /opt/remnanode), спрашивая SECRET_KEY и т. д.
@@ -47,6 +47,8 @@ PANEL_PROFILE="Goji XHTTP-TLS"
 PROFILE_SHOWN=0
 RESUME=0
 CHECK=0
+SETTINGS=0
+ARGC=$#
 
 die()  { echo -e "\e[31m[x] $*\e[0m" >&2; exit 1; }
 info() { echo -e "\e[36m[*] $*\e[0m"; }
@@ -203,6 +205,42 @@ goji_check() {
   gjc_summary
 }
 
+gj_kv() { local pad=$((32 - ${#1})); (( pad < 1 )) && pad=1; printf '  %s%*s %s\n' "$1" "$pad" "" "$2"; }
+
+# Параметры, с которыми сервер был установлен (/etc/goji-node/install.conf) и текущее состояние.
+goji_show_settings() {
+  gjc_load || return 1
+  local yn_h yn_g yn_u tpl v
+  yn_h=$([[ ${GOJI_HARDEN:-1} -eq 1 ]] && echo да || echo нет)
+  yn_g=$([[ ${GOJI_GUARD:-0} -eq 1 ]] && echo да || echo нет)
+  yn_u=$([[ ${GOJI_UPGRADE:-0} -eq 1 ]] && echo да || echo нет)
+  tpl=$(cat "$GOJI_WEBROOT/.template" 2>/dev/null || true)
+  gj_title "Установленные настройки (${GOJI_ETC}/install.conf)"
+  gj_kv "Версия установщика" "${GOJI_VERSION:-?}"
+  gj_kv "Дата установки/обновления" "$(date -r "$GOJI_ETC/install.conf" '+%Y-%m-%d %H:%M' 2>/dev/null || echo ?)"
+  gj_kv "Домен" "$GOJI_DOMAIN"
+  gj_kv "E-mail Let's Encrypt" "${GOJI_EMAIL:-не задан}"
+  gj_kv "Xray: порт / путь XHTTP" "127.0.0.1:$GOJI_XRAY_PORT  $GOJI_XPATH"
+  gj_kv "Сайт-заглушка" "${tpl:-не определена}${tpl:+ — $(goji_tpl_desc "$tpl")}"
+  gj_kv "Remnawave Node" "$([[ ${GOJI_SKIP_NODE:-0} -eq 1 ]] && echo 'не устанавливалась (--skip-node)' || echo "порт API :${GOJI_NODE_PORT:-?}")"
+  gj_kv "IP панели (для порта ноды)" "${GOJI_PANEL_IP:-не задан}"
+  gj_kv "Имя профиля в Remnawave" "${GOJI_PANEL_PROFILE:-Goji XHTTP-TLS}"
+  gj_kv "Усиление защиты и тюнинг" "$yn_h"
+  if [[ ${GOJI_HARDEN:-1} -eq 1 ]]; then
+    gj_kv "  порт SSH" "${GOJI_SSH_PORT:-определён автоматически}"
+    gj_kv "  ping (входящий echo)" "$([[ ${GOJI_ICMP_DROP:-0} -eq 1 ]] && echo 'полная блокировка' || echo 'лимит 5/с')"
+    gj_kv "  Traffic Control" "$yn_g"
+    gj_kv "  IP администратора" "${GOJI_ADMIN_IPS:-авто (адрес SSH-сессии)}"
+    gj_kv "  дополнительные порты" "${GOJI_EXTRA_PORTS:-нет}"
+  fi
+  gj_kv "Обновление ОС при установке" "$yn_u"
+  gj_kv "nginx" "$(command -v nginx >/dev/null && nginx -v 2>&1 | sed 's#.*/##' || echo 'не установлен')"
+  v=$(command -v docker >/dev/null && docker inspect -f '{{.Config.Image}}' remnanode 2>/dev/null | sed 's#.*/##' || true)
+  gj_kv "Образ ноды" "${v:--}"
+  echo "----------------------------------------------------------------"
+  echo "Пароли и ключи в этом файле не хранятся (SECRET_KEY берётся из compose ноды)."
+}
+
 # Открытые порты и правила файрвола.
 goji_ports() {
   gj_title "Открытые порты (слушающие сокеты)"
@@ -285,7 +323,9 @@ goji_tpl_choose() { # goji_tpl_choose <templates dir> [current]
     done
   } >&2
   while :; do
-    read -r -p "Номер [0]: " pick </dev/tty || { echo random; return 0; }
+    if [[ -n $cur ]]; then read -r -p "Номер [Enter = оставить «$cur»]: " pick </dev/tty || { echo "$cur"; return 0; }
+    else read -r -p "Номер [0]: " pick </dev/tty || { echo random; return 0; }; fi
+    if [[ -z $pick && -n $cur ]]; then echo "$cur"; return 0; fi
     pick=${pick:-0}
     if [[ $pick == 0 ]]; then echo random; return 0; fi
     if [[ $pick =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#names[@]} )); then echo "${names[pick-1]}"; return 0; fi
@@ -312,27 +352,29 @@ goji_menu() {
 
 ================ Goji node — меню ================
   1) Полная проверка настроек
-  2) Сайт, сертификат и nginx
-  3) Нода Remnawave и Xray
-  4) Система: BBR, ZRAM, обновления
-  5) Защита: UFW, Fail2ban, SSH, ping, Traffic Control
-  6) Открытые порты и правила UFW
-  7) Профиль для Remnawave (готовый JSON)
-  8) Сменить сайт-заглушку
-  9) Проверить автопродление сертификата (certbot --dry-run)
+  2) Установленные настройки (с чем ставился сервер)
+  3) Сайт, сертификат и nginx
+  4) Нода Remnawave и Xray
+  5) Система: BBR, ZRAM, обновления
+  6) Защита: UFW, Fail2ban, SSH, ping, Traffic Control
+  7) Открытые порты и правила UFW
+  8) Профиль для Remnawave (готовый JSON)
+  9) Сменить сайт-заглушку
+ 10) Проверить автопродление сертификата (certbot --dry-run)
   0) Выход
 MENU
     read -r -p "Пункт: " c || return 0
     case "$c" in
       1) goji_check all || true ;;
-      2) goji_check web || true ;;
-      3) goji_check node || true ;;
-      4) goji_check system || true ;;
-      5) goji_check security || true ;;
-      6) goji_ports ;;
-      7) goji_show_profile ;;
-      8) goji_decoy ;;
-      9) certbot renew --dry-run ;;
+      2) goji_show_settings ;;
+      3) goji_check web || true ;;
+      4) goji_check node || true ;;
+      5) goji_check system || true ;;
+      6) goji_check security || true ;;
+      7) goji_ports ;;
+      8) goji_show_profile ;;
+      9) goji_decoy ;;
+      10) certbot renew --dry-run ;;
       0|q|"") return 0 ;;
       *) echo "Нет такого пункта." ;;
     esac
@@ -343,10 +385,11 @@ goji_main() {
   case "${1:-menu}" in
     menu)         goji_menu ;;
     check)        shift; goji_check "$@" ;;
+    settings)     goji_show_settings ;;
     ports)        goji_ports ;;
     profile)      goji_show_profile ;;
     decoy)        shift; goji_decoy "$@" ;;
-    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | ports | profile | decoy [имя|random]" ;;
+    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | settings | ports | profile | decoy [имя|random]" ;;
     *)            echo "Неизвестная команда: $1 (goji-node --help)" >&2; return 1 ;;
   esac
 }
@@ -358,6 +401,7 @@ for a in "$@"; do
     --version) echo "goji-node-setup $VERSION"; exit 0 ;;
     --resume)  RESUME=1 ;;
     --check)   CHECK=1 ;;
+    --settings) SETTINGS=1 ;;
   esac
 done
 if [[ $RESUME -eq 1 ]]; then
@@ -392,7 +436,7 @@ while [[ $# -gt 0 ]]; do
     --no-traffic-control) GUARD_MODE=0; shift ;;
     --upgrade-os)    UPGRADE_MODE=1; shift ;;
     --no-upgrade-os) UPGRADE_MODE=0; shift ;;
-    --resume|--check) shift ;;
+    --resume|--check|--settings) shift ;;
     -h|--help)   sed -n '2,21p' "$0"; exit 0 ;;
     -*)          die "неизвестный параметр: $1" ;;
     *)           DOMAIN="$1"; shift ;;
@@ -401,6 +445,32 @@ done
 
 [[ $EUID -eq 0 ]] || die "запустите от root"
 if [[ $CHECK -eq 1 ]]; then rc=0; goji_check || rc=$?; exit $rc; fi
+if [[ $SETTINGS -eq 1 ]]; then goji_show_settings; exit $?; fi
+
+# Сервер уже настроен этим скриптом, запуск без параметров на терминале: сначала предлагаем
+# проверить установленное, и только потом (по выбору) начинать установку заново.
+if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
+  while :; do
+    cat <<'MENU'
+
+На этом сервере уже есть установка Goji node. Что сделать?
+  1) Проверить настройки сервера (полная проверка)
+  2) Показать установленные настройки
+  3) Открыть меню goji-node (проверки, профиль Remnawave, смена заглушки)
+  4) Переустановить / изменить установку (вопросы заново)
+  0) Выход
+MENU
+    read -r -p "Пункт: " __m </dev/tty || exit 0
+    case "$__m" in
+      1) goji_check all || true ;;
+      2) goji_show_settings ;;
+      3) goji_menu </dev/tty ;;
+      4) break ;;
+      0|q|"") exit 0 ;;
+      *) echo "Нет такого пункта." ;;
+    esac
+  done
+fi
 command -v apt-get >/dev/null || die "поддерживаются только Debian/Ubuntu (apt)"
 [[ "$XPATH" == /*/ ]] || die "--path должен начинаться и заканчиваться на '/'"
 
@@ -438,6 +508,33 @@ ACME=/var/www/acme
 CONF=/etc/nginx/conf.d/xhttp-tls.conf
 ACME_CONF=/etc/nginx/conf.d/xhttp-acme.conf
 LIVE=/etc/letsencrypt/live/$DOMAIN
+
+# ---------------------------------------------------------------- decoy choice (first question)
+# Шаблоны распаковываются и остаются в /usr/share/goji-node/templates: заглушку можно
+# сменить позже командой `goji-node decoy` (или пунктом меню) без повторной установки.
+TPL_DIR=$(mktemp -d)
+trap 'rm -rf "$TPL_DIR"' EXIT
+echo "__TEMPLATES_B64__" | base64 -d | tar -xz -C "$TPL_DIR"
+TEMPLATES=$(ls "$TPL_DIR")
+rm -rf "$GOJI_SHARE/templates"; mkdir -p "$GOJI_SHARE/templates"
+cp -a "$TPL_DIR/." "$GOJI_SHARE/templates/"
+SAVED_TPL=""
+if [[ -f "$WEBROOT/.template" ]]; then
+  SAVED_TPL=$(cat "$WEBROOT/.template")
+  [[ -d "$TPL_DIR/$SAVED_TPL" ]] || { warn "сохранённая заглушка «$SAVED_TPL» больше не существует"; SAVED_TPL=""; }
+fi
+if [[ -z "$TEMPLATE" ]]; then
+  if [[ -r /dev/tty && $RESUME -eq 0 ]]; then
+    TEMPLATE=$(goji_tpl_choose "$TPL_DIR" "$SAVED_TPL")      # первый вопрос установки
+  elif [[ -n "$SAVED_TPL" ]]; then
+    TEMPLATE=$SAVED_TPL                                       # --resume/без терминала: сайт не меняется
+    info "Сайт-заглушка «$TEMPLATE» уже установлена (сменить: goji-node decoy)"
+  fi
+fi
+if [[ -z "$TEMPLATE" || "$TEMPLATE" == random ]]; then
+  TEMPLATE=$(echo "$TEMPLATES" | shuf -n 1)
+fi
+[[ "$TEMPLATE" =~ ^[a-z0-9-]+$ && -d "$TPL_DIR/$TEMPLATE" ]] || die "неизвестная заглушка «$TEMPLATE» (доступны: $(echo $TEMPLATES))"
 
 # ---------------------------------------------------------------- questions
 # Works with "curl ... | bash" too: prompts read from the terminal, not stdin.
@@ -592,24 +689,6 @@ fi
 # ---------------------------------------------------------------- decoy site
 # Шаблоны распаковываются и остаются в /usr/share/goji-node/templates: заглушку можно
 # сменить позже командой `goji-node decoy` (или пунктом меню) без повторной установки.
-TPL_DIR=$(mktemp -d)
-trap 'rm -rf "$TPL_DIR"' EXIT
-echo "__TEMPLATES_B64__" | base64 -d | tar -xz -C "$TPL_DIR"
-TEMPLATES=$(ls "$TPL_DIR")
-rm -rf "$GOJI_SHARE/templates"; mkdir -p "$GOJI_SHARE/templates"
-cp -a "$TPL_DIR/." "$GOJI_SHARE/templates/"
-if [[ -z "$TEMPLATE" && -f "$WEBROOT/.template" ]]; then
-  TEMPLATE=$(cat "$WEBROOT/.template")          # сайт не меняется при повторных запусках
-  [[ -d "$TPL_DIR/$TEMPLATE" ]] || { warn "сохранённая заглушка «$TEMPLATE» больше не существует — выбираем заново"; TEMPLATE=""; }
-  [[ -z "$TEMPLATE" ]] || info "Сайт-заглушка «$TEMPLATE» уже установлена (сменить: goji-node decoy)"
-fi
-if [[ -z "$TEMPLATE" && -r /dev/tty ]]; then
-  TEMPLATE=$(goji_tpl_choose "$TPL_DIR" "")
-fi
-if [[ -z "$TEMPLATE" || "$TEMPLATE" == random ]]; then
-  TEMPLATE=$(echo "$TEMPLATES" | shuf -n 1)
-fi
-[[ "$TEMPLATE" =~ ^[a-z0-9-]+$ && -d "$TPL_DIR/$TEMPLATE" ]] || die "неизвестная заглушка «$TEMPLATE» (доступны: $(echo $TEMPLATES))"
 info "Устанавливаю сайт-заглушку «$TEMPLATE» в $WEBROOT"
 mkdir -p "$ACME"
 goji_deploy_decoy "$TEMPLATE" "$TPL_DIR"
@@ -1579,7 +1658,7 @@ install_check_command() {
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT
     declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_web gjc_node gjc_system gjc_security gjc_summary \
-      goji_check goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
+      goji_check gj_kv goji_show_settings goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
