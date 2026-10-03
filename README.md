@@ -200,7 +200,3 @@ xhttp-tls/
 ## Лицензия
 
 [MIT](LICENSE), © 2026 goji-app. Сторонние шаблоны в `xhttp-tls/templates/` распространяются под своими лицензиями (тоже MIT), их тексты лежат в папках шаблонов.
-
-## Благодарности
-
-Структура проверок, откат SSH-настроек, ранний nftables-слой против ping и идея Traffic Control вдохновлены проектом [ЧебурNET Vision Installer](https://github.com/leonidkopysov/CheburNET-Vision-Installer) (MIT, © 2026 Леонид Копысов). Код здесь написан заново под протокол XHTTP+TLS; протокол, nginx-фронт и профиль Xray не менялись. Списки сетей — [shadow-netlab/traffic-guard-lists](https://github.com/shadow-netlab/traffic-guard-lists), у них своя лицензия.
