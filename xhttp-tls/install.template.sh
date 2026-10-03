@@ -82,8 +82,10 @@ gjm_init() { # gjm_init [fd]: fd, на который пойдёт вывод (�
   if [[ ${GOJI_COLOR:-} == 1 || ( -t ${1:-1} && -z ${NO_COLOR:-} ) ]]; then
     GM_R=$'\e[0m'; GM_B=$'\e[1m'; GM_D=$'\e[2m'; GM_RED=$'\e[31m'; GM_GRN=$'\e[32m'
     GM_YEL=$'\e[33m'; GM_CYN=$'\e[36m'
+    GM_BGY=$'\e[1;30;43m'; GM_BGG=$'\e[1;30;42m'; GM_BGR=$'\e[1;97;41m'
   else
     GM_R=""; GM_B=""; GM_D=""; GM_RED=""; GM_GRN=""; GM_YEL=""; GM_CYN=""
+    GM_BGY=""; GM_BGG=""; GM_BGR=""
   fi
 }
 gjm_rule() { local s; printf -v s '%*s' "$2" ''; printf '%s' "${s// /$1}"; } # gjm_rule <символ> <число>
@@ -99,10 +101,54 @@ gjm_header() { # gjm_header <заголовок> [подзаголовок]
   fi
   printf '%s╰%s╯%s\n' "$GM_CYN" "$(gjm_rule ─ $w)" "$GM_R"
 }
-gjm_section() { printf '\n %s%s%s %s%s%s\n' "$GM_B$GM_CYN" "$1" "$GM_R" "$GM_D" "$(gjm_rule ─ $((60 - ${#1})))" "$GM_R"; }
-gjm_item() { # gjm_item <ключ> <текст> [подсказка] [цвет текста]
-  local pad=$((34 - ${#2})); (( pad < 1 )) && pad=1
-  printf '   %s[%2s]%s %s%s%s%*s %s%s%s\n' "$GM_B$GM_YEL" "$1" "$GM_R" "${4:-}" "$2" "${4:+$GM_R}" "$pad" "" "$GM_D" "${3:-}" "$GM_R"
+# gjm_grad <текст>: текст с градиентом от голубого к розовому (без цветов печатает как есть).
+gjm_grad() {
+  local t=$1 i n=${#1} idx pal=(51 45 39 75 111 147 183 177 171 207)
+  if [[ -z $GM_B ]]; then printf '%s' "$t"; return 0; fi
+  for ((i = 0; i < n; i++)); do
+    idx=$(( i * ${#pal[@]} / (n > 0 ? n : 1) ))
+    printf '\e[1;38;5;%sm%s' "${pal[idx]}" "${t:i:1}"
+  done
+  printf '%s' "$GM_R"
+}
+# gjm_banner [подзаголовок]: логотип GOJI с градиентом по строкам.
+gjm_banner() {
+  gjm_init
+  local rows=(
+    " █████    █████      ████  ███"
+    "█        █     █        █   █ "
+    "█  ███   █     █        █   █ "
+    "█    █   █     █  █     █   █ "
+    " █████    █████    █████   ███"
+  ) cols=(51 45 39 75 111) i
+  local side=("" "" "${VERSION:+v$VERSION}" "" "${1:-}")
+  echo
+  for i in 0 1 2 3 4; do
+    if [[ -n $GM_B ]]; then printf '  \e[1;38;5;%sm%s%s' "${cols[i]}" "${rows[i]}" "$GM_R"; else printf '  %s' "${rows[i]}"; fi
+    printf '  %s%s%s\n' "$GM_D" "${side[i]}" "$GM_R"
+  done
+  printf '  %s%s%s\n' "$GM_D" "VPN-нода · XHTTP + TLS · Remnawave" "$GM_R"
+}
+# gjm_section <заголовок> [код цвета 0-255]: раздел с цветным маркером.
+gjm_section() {
+  local col=${2:-45}
+  if [[ -n $GM_B ]]; then
+    printf '\n  \e[1;38;5;%sm◆ %s%s %s%s%s\n' "$col" "$1" "$GM_R" "$GM_D" "$(gjm_rule ─ $((56 - ${#1})))" "$GM_R"
+  else
+    printf '\n  ◆ %s %s\n' "$1" "$(gjm_rule - $((56 - ${#1})))"
+  fi
+}
+gjm_item() { # gjm_item <ключ> <текст> [подсказка] [цвет: $GM_GRN или $GM_RED]
+  local pad=$((34 - ${#2})) pill
+  (( pad < 1 )) && pad=1
+  if [[ -z $GM_B ]]; then pill=$(printf '[%2s]' "$1")
+  else
+    local bg=$GM_BGY
+    [[ -n ${4:-} && ${4:-} == "$GM_GRN" ]] && bg=$GM_BGG
+    [[ -n ${4:-} && ${4:-} == "$GM_RED" ]] && bg=$GM_BGR
+    pill=$(printf '%s %2s %s' "$bg" "$1" "$GM_R")
+  fi
+  printf '   %s %s%s%s%*s %s%s%s\n' "$pill" "${4:-}" "$2" "${4:+$GM_R}" "$pad" "" "$GM_D" "${3:-}" "$GM_R"
 }
 gjm_dot() { # gjm_dot ok|warn|fail|off <подпись>
   local c
@@ -720,26 +766,27 @@ goji_uninstall() {
 goji_menu() {
   local c
   while :; do
-    gjm_header "GOJI  NODE" "панель управления сервером"
+    gjm_banner "панель управления"
+    echo
     gjm_status
-    gjm_section "Проверка"
+    gjm_section "Проверка" 45
     gjm_item 1 "Полная проверка настроек" "всё сразу"
     gjm_item 2 "Установленные настройки" "с чем ставился сервер"
     gjm_item 3 "Сайт, сертификат, nginx"
     gjm_item 4 "Нода Remnawave и Xray"
     gjm_item 5 "Система" "BBR, ZRAM, обновления"
     gjm_item 6 "Защита" "UFW, Fail2ban, SSH, ping"
-    gjm_section "Сервер"
+    gjm_section "Сервер" 171
     gjm_item 7 "Открытые порты и правила UFW"
     gjm_item 8 "Профиль для Remnawave" "готовый JSON для копирования"
     gjm_item 9 "Сменить сайт-заглушку"
     gjm_item 10 "Автопродление сертификата" "проверка certbot --dry-run"
-    gjm_section "Обслуживание"
+    gjm_section "Обслуживание" 214
     gjm_item 12 "Найти и исправить ошибки" "автоматически" "$GM_GRN"
     gjm_item 11 "Удалить компоненты установки" "с выбором" "$GM_RED"
     gjm_item 0 "Выход"
     echo
-    read -r -p "${GM_B}Пункт ❯${GM_R} " c || return 0
+    read -r -p "  $(gjm_grad 'Ваш выбор') ${GM_B}❯${GM_R} " c || return 0
     case "$c" in
       1) goji_check all || true; gjm_pause ;;
       2) goji_show_settings; gjm_pause ;;
@@ -854,9 +901,10 @@ if [[ $UNINSTALL -eq 1 ]]; then goji_uninstall; exit $?; fi
 # проверить установленное, и только потом (по выбору) начинать установку заново.
 if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
   while :; do
-    gjm_header "GOJI  NODE  v$VERSION" "на этом сервере уже есть установка"
+    gjm_banner "на сервере уже есть установка"
+    echo
     gjm_status
-    gjm_section "Что сделать?"
+    gjm_section "Что сделать?" 45
     gjm_item 1 "Проверить настройки сервера" "полная проверка"
     gjm_item 2 "Показать установленные настройки"
     gjm_item 3 "Меню goji-node" "проверки, профиль Remnawave, заглушка"
@@ -865,7 +913,7 @@ if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
     gjm_item 6 "Удалить компоненты установки" "с выбором" "$GM_RED"
     gjm_item 0 "Выход"
     echo
-    read -r -p "${GM_B}Пункт ❯${GM_R} " __m </dev/tty || exit 0
+    read -r -p "  $(gjm_grad 'Ваш выбор') ${GM_B}❯${GM_R} " __m </dev/tty || exit 0
     case "$__m" in
       1) goji_check all || true ;;
       2) goji_show_settings ;;
@@ -918,7 +966,7 @@ ACME_CONF=/etc/nginx/conf.d/xhttp-acme.conf
 LIVE=/etc/letsencrypt/live/$DOMAIN
 
 # ---------------------------------------------------------------- decoy choice (first question)
-if [[ -t 1 ]]; then gjm_header "GOJI  NODE  v$VERSION" "TLS-фронт и нода Remnawave"; fi
+if [[ -t 1 ]]; then gjm_banner "установка"; echo; fi
 # Шаблоны распаковываются и остаются в /usr/share/goji-node/templates: заглушку можно
 # сменить позже командой `goji-node decoy` (или пунктом меню) без повторной установки.
 TPL_DIR=$(mktemp -d)
@@ -2066,8 +2114,8 @@ install_check_command() {
   {
     echo '#!/usr/bin/env bash'
     echo 'export LC_ALL=C.UTF-8'
-    declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS
-    declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_web gjc_node gjc_system gjc_security gjc_summary \
+    declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION
+    declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_web gjc_node gjc_system gjc_security gjc_summary \
       goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
