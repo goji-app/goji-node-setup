@@ -12,7 +12,7 @@
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
 #                            [--upgrade-os|--no-upgrade-os]
-#   bash install.sh --check | --settings | --resume | --version
+#   bash install.sh --check | --settings | --uninstall | --resume | --version
 # После установки: goji-node — меню проверки, профиль для Remnawave, смена заглушки.
 #
 # Переустанавливает Remnawave Node (docker, /opt/remnanode), спрашивая SECRET_KEY и т. д.
@@ -48,6 +48,7 @@ PROFILE_SHOWN=0
 RESUME=0
 CHECK=0
 SETTINGS=0
+UNINSTALL=0
 ARGC=$#
 
 die()  { echo -e "\e[31m[x] $*\e[0m" >&2; exit 1; }
@@ -345,6 +346,149 @@ goji_decoy() {
   echo "Заглушка «$name» установлена. Проверка https://$GOJI_DOMAIN/ → HTTP ${code:-нет ответа}."
 }
 
+# ---- удаление компонентов установки -------------------------------------------------------
+GJU_KEYS=(site cert node ping guard tuning ssh fail2ban ufw tools)
+
+gju_desc() {
+  case "$1" in
+    site)     echo "Сайт-заглушка и конфигурация nginx Goji (пакет nginx остаётся)" ;;
+    cert)     echo "Сертификат Let's Encrypt этого домена (вместе с сайтом, т. к. nginx на него ссылается)" ;;
+    node)     echo "Remnawave Node: контейнер и каталог /opt/remnanode (нода отключится от панели!)" ;;
+    ping)     echo "Защита от ping (nftables goji_privacy, служба goji-two-way-ping)" ;;
+    guard)    echo "Traffic Control (goji-guard, списки сканеров, таймер обновления)" ;;
+    tuning)   echo "Тюнинг: sysctl (BBR/fq и др.), tc fq, ZRAM-swap" ;;
+    ssh)      echo "Усиление SSH (файл sshd_config.d/00-goji-hardening.conf)" ;;
+    fail2ban) echo "Fail2ban: jail sshd/recidive от Goji (пакет остаётся)" ;;
+    ufw)      echo "Правила UFW установщика: 80, 443, порт ноды, доп. порты (SSH и политика по умолчанию не трогаются)" ;;
+    tools)    echo "Команда goji-node, сохранённые настройки и шаблоны (/etc/goji-node, /usr/share/goji-node)" ;;
+  esac
+}
+
+# Выполняет удаление одного компонента; ошибки отдельных шагов не прерывают работу.
+gju_do() {
+  local k=$1 f svc p np
+  case "$k" in
+    site)
+      rm -f /etc/nginx/conf.d/xhttp-tls.conf /etc/nginx/conf.d/xhttp-acme.conf
+      rm -rf "$GOJI_WEBROOT" /var/www/acme
+      if command -v nginx >/dev/null 2>&1; then
+        if nginx -t >/dev/null 2>&1; then systemctl reload nginx >/dev/null 2>&1 || true; gj_row ok "Сайт и конфигурация nginx" "удалены, nginx перезагружен"
+        else gj_row warn "Сайт и конфигурация nginx" "удалены, но nginx -t сообщает об ошибке — проверьте остальные конфиги"; fi
+      else gj_row ok "Сайт и конфигурация nginx" "удалены"; fi ;;
+    cert)
+      if command -v certbot >/dev/null 2>&1 && certbot delete --cert-name "$GOJI_DOMAIN" --non-interactive >/dev/null 2>&1; then
+        gj_row ok "Сертификат Let's Encrypt" "удалён ($GOJI_DOMAIN)"
+      else gj_row warn "Сертификат Let's Encrypt" "не удалён (нет certbot или сертификата) — проверьте: certbot certificates"; fi ;;
+    node)
+      if command -v docker >/dev/null 2>&1; then
+        [[ -f /opt/remnanode/docker-compose.yml ]] && (cd /opt/remnanode && docker compose down >/dev/null 2>&1) || true
+        docker rm -f remnanode >/dev/null 2>&1 || true
+      fi
+      if [[ -d /opt/remnanode ]]; then
+        p=/var/backups/goji-node/remnanode-$(date +%Y%m%d-%H%M%S)
+        mkdir -p /var/backups/goji-node && mv /opt/remnanode "$p" && chmod 700 "$p" \
+          && gj_row ok "Remnawave Node" "контейнер удалён; compose с ключом сохранён в $p (права 700)" \
+          || gj_row warn "Remnawave Node" "контейнер остановлен, но каталог /opt/remnanode не перенесён"
+      else gj_row ok "Remnawave Node" "контейнер удалён"; fi ;;
+    ping)
+      systemctl disable --now goji-two-way-ping.service >/dev/null 2>&1 || true
+      nft delete table inet goji_privacy >/dev/null 2>&1 || true
+      rm -f /etc/systemd/system/goji-two-way-ping.service /usr/local/sbin/goji-two-way-ping.sh /etc/default/goji-two-way-ping
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      gj_row ok "Защита от ping" "удалена, правила nftables сняты" ;;
+    guard)
+      systemctl disable --now goji-guard.service goji-guard-update.timer goji-guard-update.service >/dev/null 2>&1 || true
+      nft delete table inet goji_guard >/dev/null 2>&1 || true
+      rm -f /etc/systemd/system/goji-guard.service /etc/systemd/system/goji-guard-update.service /etc/systemd/system/goji-guard-update.timer /usr/local/sbin/goji-guard
+      rm -rf /etc/goji-guard /var/lib/goji-guard
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      gj_row ok "Traffic Control" "удалён, блокировки сняты" ;;
+    tuning)
+      systemctl disable --now goji-tc.service goji-zram.service >/dev/null 2>&1 || true
+      rm -f /etc/systemd/system/goji-tc.service /etc/systemd/system/goji-zram.service /usr/local/sbin/goji-tc.sh /usr/local/sbin/goji-zram.sh \
+            /etc/default/goji-zram /etc/sysctl.d/99-goji-tuning.conf /etc/modules-load.d/goji-bbr.conf /etc/modules-load.d/goji-conntrack.conf
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      sysctl --system >/dev/null 2>&1 || true
+      gj_row ok "Тюнинг" "файлы и службы удалены; значения sysctl и qdisc полностью вернутся после перезагрузки" ;;
+    ssh)
+      f=/etc/ssh/sshd_config.d/00-goji-hardening.conf
+      if [[ -e $f ]]; then
+        rm -f "$f"
+        if sshd -t 2>/dev/null; then
+          for svc in ssh sshd; do systemctl reload "$svc" >/dev/null 2>&1 && break; done
+          gj_row ok "Усиление SSH" "снято, sshd перечитал конфигурацию"
+        else gj_row warn "Усиление SSH" "файл удалён, но sshd -t сообщает об ошибке — sshd не перезагружен"; fi
+      else gj_row ok "Усиление SSH" "не было применено"; fi ;;
+    fail2ban)
+      rm -f /etc/fail2ban/jail.d/goji.local
+      if systemctl is-active --quiet fail2ban 2>/dev/null; then systemctl reload fail2ban >/dev/null 2>&1 || systemctl restart fail2ban >/dev/null 2>&1 || true; fi
+      gj_row ok "Fail2ban" "jail Goji удалён" ;;
+    ufw)
+      if command -v ufw >/dev/null 2>&1; then
+        ufw --force delete allow 80/tcp >/dev/null 2>&1 || true
+        ufw --force delete allow 443/tcp >/dev/null 2>&1 || true
+        if [[ -n ${GOJI_NODE_PORT:-} ]]; then
+          [[ -n ${GOJI_PANEL_IP:-} ]] && { ufw --force delete allow from "$GOJI_PANEL_IP" to any port "$GOJI_NODE_PORT" proto tcp >/dev/null 2>&1 || true; }
+          ufw --force delete allow "$GOJI_NODE_PORT/tcp" >/dev/null 2>&1 || true
+        fi
+        for np in ${GOJI_EXTRA_PORTS:-}; do ufw --force delete allow "$np" >/dev/null 2>&1 || true; done
+        gj_row ok "Правила UFW" "правила установщика удалены (SSH и политика по умолчанию не тронуты)"
+      else gj_row ok "Правила UFW" "ufw не установлен"; fi ;;
+    tools)
+      rm -f /usr/local/sbin/goji-node-check /usr/local/sbin/goji-node
+      rm -rf /usr/share/goji-node /etc/goji-node
+      gj_row ok "goji-node и настройки" "удалены (копии в /var/backups/goji-node остаются)" ;;
+  esac
+}
+
+# goji_uninstall [--yes] [компонент... | all] — без аргументов показывает меню выбора.
+goji_uninstall() {
+  gjc_load || return 1
+  local yes=0 sel=() k n i pick ans a
+  for a in "$@"; do
+    case "$a" in
+      --yes) yes=1 ;;
+      all) sel=("${GJU_KEYS[@]}") ;;
+      *) n=0; for k in "${GJU_KEYS[@]}"; do [[ $k == "$a" ]] && n=1; done
+         if (( n )); then sel+=("$a"); else echo "Неизвестный компонент: $a (доступны: ${GJU_KEYS[*]} all)" >&2; return 1; fi ;;
+    esac
+  done
+  if (( ${#sel[@]} == 0 )); then
+    while :; do
+      echo
+      echo "Удаление компонентов Goji node. Что удалить?"
+      i=0; for k in "${GJU_KEYS[@]}"; do i=$((i + 1)); printf '  %2d) %s\n' "$i" "$(gju_desc "$k")"; done
+      echo "   a) всё перечисленное        0) отмена"
+      read -r -p "Номера через пробел: " pick || return 0
+      sel=()
+      case "$pick" in
+        0|q|"") return 0 ;;
+        a|A|all) sel=("${GJU_KEYS[@]}"); break ;;
+      esac
+      n=0
+      for a in $pick; do
+        if [[ $a =~ ^[0-9]+$ ]] && (( a >= 1 && a <= ${#GJU_KEYS[@]} )); then sel+=("${GJU_KEYS[a-1]}"); else n=1; fi
+      done
+      if (( n || ${#sel[@]} == 0 )); then echo "Введите номера от 1 до ${#GJU_KEYS[@]}, a или 0."; continue; fi
+      break
+    done
+  fi
+  # сертификат нельзя убрать, пока nginx на него ссылается: сайт удаляется вместе с ним
+  for k in "${sel[@]}"; do [[ $k == cert ]] && { printf '%s\n' "${sel[@]}" | grep -qx site || sel+=(site); }; done
+  echo
+  echo "Будет удалено:"
+  for k in "${GJU_KEYS[@]}"; do printf '%s\n' "${sel[@]}" | grep -qx "$k" && echo "  • $(gju_desc "$k")"; done
+  if (( ! yes )); then
+    read -r -p "Действие необратимо. Для подтверждения введите «удалить»: " ans || return 0
+    [[ $ans == удалить ]] || { echo "Отменено."; return 0; }
+  fi
+  echo
+  for k in "${GJU_KEYS[@]}"; do printf '%s\n' "${sel[@]}" | grep -qx "$k" && gju_do "$k"; done
+  echo
+  echo "Готово. Пакеты (nginx, certbot, docker, ufw, fail2ban, nftables) не удалялись."
+  return 0
+}
+
 goji_menu() {
   local c
   while :; do
@@ -361,6 +505,7 @@ goji_menu() {
   8) Профиль для Remnawave (готовый JSON)
   9) Сменить сайт-заглушку
  10) Проверить автопродление сертификата (certbot --dry-run)
+ 11) Удалить компоненты установки
   0) Выход
 MENU
     read -r -p "Пункт: " c || return 0
@@ -375,6 +520,7 @@ MENU
       8) goji_show_profile ;;
       9) goji_decoy ;;
       10) certbot renew --dry-run ;;
+      11) goji_uninstall; [[ -r $GOJI_ETC/install.conf ]] || return 0 ;;
       0|q|"") return 0 ;;
       *) echo "Нет такого пункта." ;;
     esac
@@ -386,10 +532,11 @@ goji_main() {
     menu)         goji_menu ;;
     check)        shift; goji_check "$@" ;;
     settings)     goji_show_settings ;;
+    uninstall)    shift; goji_uninstall "$@" ;;
     ports)        goji_ports ;;
     profile)      goji_show_profile ;;
     decoy)        shift; goji_decoy "$@" ;;
-    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | settings | ports | profile | decoy [имя|random]" ;;
+    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | settings | uninstall [--yes] [компонент...|all] | ports | profile | decoy [имя|random]" ;;
     *)            echo "Неизвестная команда: $1 (goji-node --help)" >&2; return 1 ;;
   esac
 }
@@ -402,6 +549,7 @@ for a in "$@"; do
     --resume)  RESUME=1 ;;
     --check)   CHECK=1 ;;
     --settings) SETTINGS=1 ;;
+    --uninstall) UNINSTALL=1 ;;
   esac
 done
 if [[ $RESUME -eq 1 ]]; then
@@ -436,7 +584,7 @@ while [[ $# -gt 0 ]]; do
     --no-traffic-control) GUARD_MODE=0; shift ;;
     --upgrade-os)    UPGRADE_MODE=1; shift ;;
     --no-upgrade-os) UPGRADE_MODE=0; shift ;;
-    --resume|--check|--settings) shift ;;
+    --resume|--check|--settings|--uninstall) shift ;;
     -h|--help)   sed -n '2,21p' "$0"; exit 0 ;;
     -*)          die "неизвестный параметр: $1" ;;
     *)           DOMAIN="$1"; shift ;;
@@ -446,6 +594,7 @@ done
 [[ $EUID -eq 0 ]] || die "запустите от root"
 if [[ $CHECK -eq 1 ]]; then rc=0; goji_check || rc=$?; exit $rc; fi
 if [[ $SETTINGS -eq 1 ]]; then goji_show_settings; exit $?; fi
+if [[ $UNINSTALL -eq 1 ]]; then goji_uninstall; exit $?; fi
 
 # Сервер уже настроен этим скриптом, запуск без параметров на терминале: сначала предлагаем
 # проверить установленное, и только потом (по выбору) начинать установку заново.
@@ -458,6 +607,7 @@ if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
   2) Показать установленные настройки
   3) Открыть меню goji-node (проверки, профиль Remnawave, смена заглушки)
   4) Переустановить / изменить установку (вопросы заново)
+  5) Удалить компоненты установки (выбор: сайт, сертификат, нода, защита, тюнинг…)
   0) Выход
 MENU
     read -r -p "Пункт: " __m </dev/tty || exit 0
@@ -466,6 +616,7 @@ MENU
       2) goji_show_settings ;;
       3) goji_menu </dev/tty ;;
       4) break ;;
+      5) goji_uninstall || true; [[ -r $CONF_FILE ]] || exit 0 ;;
       0|q|"") exit 0 ;;
       *) echo "Нет такого пункта." ;;
     esac
@@ -1656,9 +1807,9 @@ install_check_command() {
   {
     echo '#!/usr/bin/env bash'
     echo 'export LC_ALL=C.UTF-8'
-    declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT
+    declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS
     declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_web gjc_node gjc_system gjc_security gjc_summary \
-      goji_check gj_kv goji_show_settings goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
+      goji_check gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
