@@ -10,10 +10,10 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/main/xhttp-tls/install.sh)
 ```
 
-Скрипт спросит домен, SECRET_KEY ноды, NODE_PORT, IP панели и e-mail.
+Скрипт спросит домен, SECRET_KEY ноды, NODE_PORT, IP панели, e-mail и покажет меню выбора сайта-заглушки. Все сообщения на русском.
 Всё можно передать флагами: `install.sh <домен> --secret-key ... --node-port 2222 --panel-ip ... --email ... --template blog`
 
-Заглушка выбирается случайно из `templates/` (analytics, blog, docs, saas), при повторном запуске сохраняется. После правок в `templates/` — `python build.py`.
+Заглушка выбирается в меню (на терминале) или флагом `--template <имя>`; без терминала и без флага — случайная. Доступны: analytics, blog, docs, saas, freelancer, resume, creative, grayscale, new-age, agency. При повторном запуске выбранная заглушка сохраняется. Сменить позже: `goji-node decoy` (меню) или `goji-node decoy <имя|random>`; шаблоны хранятся в `/usr/share/goji-node/templates`. Источники и лицензии: `templates/README.md`. После правок в `templates/` — `python build.py`.
 
 Перед запуском: A-запись домена указывает на этот VPS, нода добавлена в панели.
 
@@ -58,11 +58,13 @@ GOJI_PANEL_TOKEN='...' bash install.sh node.example.com --panel-url https://pane
 
 Эндпоинты и поля сверены с исходным контрактом API Remnawave backend версии 3.4.4; с живой панелью шаг не запускался, только с эмуляцией API. Прогоните сначала `goji-panel sync --dry-run`.
 
-## Проверка, продолжение, версия
+## Меню goji-node, проверка, продолжение, версия
+
+После установки доступна команда `goji-node` (от root): меню с пунктами — полная проверка настроек; отдельные проверки (сайт и сертификат, нода и Xray, система, защита); открытые порты и правила UFW; готовый профиль для Remnawave; смена сайта-заглушки; проверка автопродления сертификата (`certbot renew --dry-run`). Те же действия без меню: `goji-node check [web|node|system|security|all]`, `goji-node ports`, `goji-node profile`, `goji-node decoy [имя]`. Проверка помечает строки: ✓ — в порядке, ! — замечание, ✗ — ошибка.
 
 ```
 bash install.sh --version      # версия установщика
-goji-node-check                # отчёт «компонент — статус» (после установки; то же: install.sh --check)
+goji-node                      # меню; goji-node check — полный отчёт (то же: goji-node-check, install.sh --check)
 bash install.sh --resume       # повторить установку с сохранёнными параметрами (/etc/goji-node/install.conf)
 ```
 
@@ -75,6 +77,8 @@ bash install.sh --resume       # повторить установку с сох
 `xray-node-profile.json` — универсальный профиль (inbound `XHTTP-TLS`,
 127.0.0.1:10443). Создать его один раз в панели и назначить нодам.
 Пока на 443 висит старый профиль, скрипт ждёт до 15 минут.
+
+В конце установки скрипт **выводит готовый профиль** (JSON с вашими портом и путём): скопируйте всё между линиями «начало» и «конец» в Remnawave → Config Profiles → «+» → вставьте → Save, затем назначьте профиль ноде. Если профиль ещё не активен, JSON выводится до ожидания, чтобы его можно было вставить сразу. Копия: `/etc/goji-node/remnawave-profile.json`; показать снова: `goji-node profile`. При автонастройке панели (`--panel-url`) профиль создаётся сам, а JSON выводится в конце для проверки.
 
 ## Хост в Remnawave
 
