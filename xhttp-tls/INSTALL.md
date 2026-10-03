@@ -42,9 +42,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/mai
 
 ## Меню goji-node, проверка, продолжение, версия
 
-Если сервер уже настраивался этим скриптом, запуск `install.sh` без параметров на терминале сначала спрашивает, что сделать: проверить настройки сервера, показать установленные настройки (из `/etc/goji-node/install.conf`), открыть меню `goji-node` или переустановить заново (тогда в меню заглушки Enter оставляет текущую). Без меню: `bash install.sh --settings`.
+Если сервер уже настраивался этим скриптом, запуск `install.sh` без параметров на терминале сначала спрашивает, что сделать: проверить настройки сервера, показать установленные настройки (из `/etc/goji-node/install.conf`), открыть меню `goji-node` или переустановить заново (тогда в меню заглушки Enter оставляет текущую). Там же есть пункт «Удалить компоненты установки». Без меню: `bash install.sh --settings`, `bash install.sh --uninstall`.
 
-После установки доступна команда `goji-node` (от root): меню с пунктами — полная проверка настроек; установленные настройки (с чем ставился сервер); отдельные проверки (сайт и сертификат, нода и Xray, система, защита); открытые порты и правила UFW; готовый профиль для Remnawave; смена сайта-заглушки; проверка автопродления сертификата (`certbot renew --dry-run`). Те же действия без меню: `goji-node check [web|node|system|security|all]`, `goji-node settings`, `goji-node ports`, `goji-node profile`, `goji-node decoy [имя]`. Проверка помечает строки: ✓ — в порядке, ! — замечание, ✗ — ошибка.
+После установки доступна команда `goji-node` (от root): меню с пунктами — полная проверка настроек; установленные настройки (с чем ставился сервер); отдельные проверки (сайт и сертификат, нода и Xray, система, защита); открытые порты и правила UFW; готовый профиль для Remnawave; смена сайта-заглушки; проверка автопродления сертификата (`certbot renew --dry-run`). Те же действия без меню: `goji-node check [web|node|system|security|all]`, `goji-node settings`, `goji-node uninstall`, `goji-node ports`, `goji-node profile`, `goji-node decoy [имя]`. Проверка помечает строки: ✓ — в порядке, ! — замечание, ✗ — ошибка.
 
 ```
 bash install.sh --version      # версия установщика
@@ -55,6 +55,25 @@ bash install.sh --resume       # повторить установку с сох
 Коды `--check` и самой установки: `0` — всё в порядке; `1` — есть ошибка; `2` — всё установлено, но профиль XHTTP в панели ещё не применён (после переключения профиля запустите `--resume`). `130`/`143` — прерывание (Ctrl+C / TERM). `--resume` не переустанавливает уже работающую ноду и берёт `SECRET_KEY` из существующего compose-файла; параметры `SECRET_KEY` в `install.conf` не хранятся. Параллельный запуск блокируется (`/run/goji-node-setup.lock`).
 
 Перед установкой проверяются: systemd, ОС (Debian 12/13, Ubuntu 22.04/24.04 — на других предупреждение), архитектура, свободное место (≥1 GiB) и занятость порта 80.
+
+## Удаление компонентов
+
+`bash install.sh --uninstall` (или пункт меню «Удалить компоненты установки», или `goji-node uninstall`) показывает список и удаляет только отмеченное, после подтверждения словом «удалить»:
+
+| Компонент | Что делается |
+|---|---|
+| Сайт и nginx | удаляются конфиги `xhttp-tls.conf`, `xhttp-acme.conf`, сайт-заглушка и каталог ACME; nginx перезагружается (пакет остаётся) |
+| Сертификат | `certbot delete` для вашего домена; выбирается вместе с сайтом, потому что nginx ссылается на сертификат |
+| Remnawave Node | `docker compose down`, контейнер удаляется, `/opt/remnanode` переносится в `/var/backups/goji-node/remnanode-<дата>` (права 700, там compose с `SECRET_KEY`). **Нода отключится от панели** |
+| Защита от ping | служба, правила nftables `goji_privacy`, скрипт и `/etc/default/goji-two-way-ping` |
+| Traffic Control | службы и таймер `goji-guard*`, таблица nftables, `/etc/goji-guard`, `/var/lib/goji-guard` |
+| Тюнинг | `goji-tc`, `goji-zram`, sysctl-файл и modules-load; значения sysctl и qdisc возвращаются полностью только после перезагрузки |
+| Усиление SSH | удаляется `sshd_config.d/00-goji-hardening.conf`, после `sshd -t` sshd перечитывает конфигурацию |
+| Fail2ban | удаляется `jail.d/goji.local` |
+| Правила UFW | удаляются 80/tcp, 443/tcp, правила порта ноды и `--allow-port`; SSH и политика по умолчанию не трогаются. Скрипт не помнит, какие правила были у вас до установки: если 80/443 нужны другим сервисам, не отмечайте этот пункт |
+| goji-node и настройки | `/usr/local/sbin/goji-node*`, `/etc/goji-node`, `/usr/share/goji-node` |
+
+Пакеты (nginx, certbot, docker, ufw, fail2ban, nftables, python3) не удаляются, копии в `/var/backups/goji-node` остаются. Без меню: `goji-node uninstall [--yes] [site cert node ping guard tuning ssh fail2ban ufw tools | all]`.
 
 ## Профиль Xray в Remnawave
 
