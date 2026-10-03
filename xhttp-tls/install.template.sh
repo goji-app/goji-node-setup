@@ -271,7 +271,9 @@ goji_ports() {
 # Печатает JSON профиля Remnawave (порт и path подставлены из настроек установки).
 goji_render_profile() {
   local f=$GOJI_SHARE/xray-node-profile.json
-  [[ -r $f ]] || { echo "Нет файла профиля $f" >&2; return 1; }
+  # сервер мог быть установлен старой версией: восстанавливаем файл из встроенной копии
+  [[ -r $f ]] || { declare -F install_profile_file >/dev/null && install_profile_file; }
+  [[ -r $f ]] || { echo "Нет файла профиля $f (запустите install.sh --resume)" >&2; return 1; }
   command -v python3 >/dev/null || { echo "Нужен python3 (apt-get install python3-minimal)" >&2; return 1; }
   python3 -c '
 import json, sys
@@ -356,6 +358,7 @@ goji_tpl_choose() { # goji_tpl_choose <templates dir> [current]
 goji_decoy() {
   gjc_load || return 1
   local dir=$GOJI_SHARE/templates name=${1:-} code
+  [[ -d $dir ]] || { declare -F install_templates >/dev/null && install_templates "$dir"; }
   [[ -d $dir ]] || { echo "Шаблоны не найдены в $dir — запустите install.sh --resume." >&2; return 1; }
   [[ -n $name ]] || name=$(goji_tpl_choose "$dir" "$(cat "$GOJI_WEBROOT/.template" 2>/dev/null)")
   if [[ $name == random ]]; then name=$(ls "$dir" | shuf -n 1); fi
@@ -560,6 +563,17 @@ goji_main() {
 }
 # end of shared block
 
+# Встроенные данные: профиль Remnawave и шаблоны сайтов. Нужны и при установке, и в меню на сервере,
+# который ставился старой версией (файлов в /usr/share/goji-node там ещё нет).
+install_profile_file() {
+  mkdir -p "$GOJI_SHARE"
+  echo "__PROFILE_B64__" | base64 -d > "$GOJI_SHARE/xray-node-profile.json"
+}
+install_templates() { # install_templates <каталог>
+  mkdir -p "$1"
+  echo "__TEMPLATES_B64__" | base64 -d | tar -xz -C "$1"
+}
+
 # ---------------------------------------------------------------- resume / saved configuration
 for a in "$@"; do
   case "$a" in
@@ -683,7 +697,7 @@ LIVE=/etc/letsencrypt/live/$DOMAIN
 # сменить позже командой `goji-node decoy` (или пунктом меню) без повторной установки.
 TPL_DIR=$(mktemp -d)
 trap 'rm -rf "$TPL_DIR"' EXIT
-echo "__TEMPLATES_B64__" | base64 -d | tar -xz -C "$TPL_DIR"
+install_templates "$TPL_DIR"
 TEMPLATES=$(ls "$TPL_DIR")
 rm -rf "$GOJI_SHARE/templates"; mkdir -p "$GOJI_SHARE/templates"
 cp -a "$TPL_DIR/." "$GOJI_SHARE/templates/"
@@ -1821,13 +1835,6 @@ UNIT
   fi
 }
 
-# ---------------------------------------------------------------- профиль Remnawave
-# Готовый профиль выводится в конце установки (goji_show_profile); в панель его вставляют вручную.
-install_profile_file() {
-  mkdir -p "$GOJI_SHARE"
-  echo "__PROFILE_B64__" | base64 -d > "$GOJI_SHARE/xray-node-profile.json"
-}
-
 # Команда `goji-node` (меню и проверка) и совместимая обёртка goji-node-check.
 install_check_command() {
   {
@@ -1836,7 +1843,7 @@ install_check_command() {
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS
     declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_why443 gjc_web gjc_node gjc_system gjc_security gjc_summary \
       goji_check gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
-      goji_tpl_choose goji_decoy goji_menu goji_main
+      goji_tpl_choose goji_decoy goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
   } > /usr/local/sbin/goji-node
