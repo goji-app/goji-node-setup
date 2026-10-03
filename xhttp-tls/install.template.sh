@@ -100,6 +100,17 @@ goji_tpl_desc() {
   esac
 }
 
+# Причина, по которой HTTPS на :443 не отвечает кодом 200 (для понятного отчёта).
+gjc_why443() {
+  local code=$1 l err
+  l=$(ss -Hltnp 'sport = :443' 2>/dev/null | head -1)
+  if [[ -z $l ]]; then echo "на :443 никто не слушает (nginx не включил TLS-фронт: см. nginx -t и journalctl -u nginx)"; return; fi
+  if ! grep -q nginx <<< "$l"; then echo "порт :443 занят не nginx: $(grep -o 'users:.*' <<< "$l" | head -1)"; return; fi
+  if [[ -n $code && $code != 000 ]]; then echo "HTTP $code"; return; fi
+  err=$(curl -sS -o /dev/null --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>&1 | tail -1)
+  echo "nginx слушает :443, но запрос не прошёл: ${err:-нет ответа}"
+}
+
 gjc_web() {
   local code end days
   gj_title "Сайт, сертификат и nginx — $GOJI_DOMAIN"
@@ -122,7 +133,9 @@ gjc_web() {
   fi
 
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>/dev/null || true)
-  if [[ $code == 200 ]]; then gj_row ok "HTTPS :443, сайт-заглушка" "HTTP 200"; else gj_row fail "HTTPS :443, сайт-заглушка" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code")"; GJ_FAIL=1; fi
+  if [[ $code == 200 ]]; then gj_row ok "HTTPS :443, сайт-заглушка" "HTTP 200"; else
+    gj_row fail "HTTPS :443, сайт-заглушка" "$(gjc_why443 "$code")"; GJ_FAIL=1
+  fi
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/goji-check-nope" 2>/dev/null || true)
   if [[ $code == 404 ]]; then gj_row ok "Неизвестный путь" "HTTP 404"; else gj_row warn "Неизвестный путь" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code"), ожидался 404"; fi
   if [[ -f $GOJI_WEBROOT/.template ]]; then gj_row ok "Заглушка" "$(cat "$GOJI_WEBROOT/.template") — $(goji_tpl_desc "$(cat "$GOJI_WEBROOT/.template")")"; else gj_row warn "Заглушка" "не определена"; fi
@@ -168,10 +181,15 @@ gjc_security() {
   if [[ ${GOJI_HARDEN:-1} -ne 1 ]]; then gj_row warn "Усиление защиты" "пропущено (--skip-hardening)"; return 0; fi
   if ufw status 2>/dev/null | grep -q "Status: active"; then gj_row ok "UFW" "включён, входящие закрыты по умолчанию"; else gj_row warn "UFW" "не включён"; fi
   if fail2ban-client ping >/dev/null 2>&1; then gj_row ok "Fail2ban" "работает (sshd, recidive)"; else gj_row warn "Fail2ban" "не отвечает"; fi
-  if [[ -f /etc/ssh/sshd_config.d/00-goji-hardening.conf ]] && sshd -T 2>/dev/null | grep -qx "maxauthtries 4"; then
-    gj_row ok "SSH" "ограничения применены (способ входа не менялся)"
+  local sshv
+  sshv=$(sshd -T 2>/dev/null | awk '$1=="maxauthtries"{print $2}')
+  if [[ $sshv =~ ^[0-9]+$ ]] && (( sshv <= 4 )); then
+    if [[ -f /etc/ssh/sshd_config.d/00-goji-hardening.conf && $sshv == 4 ]]; then gj_row ok "SSH" "ограничения применены (способ входа не менялся)"
+    else gj_row ok "SSH" "действует MaxAuthTries $sshv (строже нашего 4), задано другим файлом sshd_config.d"; fi
+  elif [[ ! -f /etc/ssh/sshd_config.d/00-goji-hardening.conf ]]; then
+    gj_row warn "SSH" "файл 00-goji-hardening.conf отсутствует: шаг пропущен или откатен при установке (см. вывод установки; бэкапы в /var/backups/goji-node)"
   else
-    gj_row warn "SSH" "ограничения не применены"
+    gj_row warn "SSH" "файл есть, но sshd применяет MaxAuthTries ${sshv:-?}: другое правило имеет приоритет (sshd -T | grep -i maxauth)"
   fi
   if nft list table inet goji_privacy >/dev/null 2>&1; then
     gj_row ok "Защита от ping" "echo-request: $(grep -qs 'MODE=drop' /etc/default/goji-two-way-ping && echo блок || echo 'лимит 5/с'), timestamp: блок"
@@ -1312,8 +1330,16 @@ CONF
 
   if ! sshd -t 2>/dev/null; then ssh_rollback "$dropin" "$had" "$bk"; return 0; fi
   sshd -T > "$bk/sshd-after.txt"
+  local cur
   for kv in "maxauthtries 4" "logingracetime 30" "allowagentforwarding no" "permittunnel no" "x11forwarding no" "gatewayports no"; do
-    grep -qx "$kv" "$bk/sshd-after.txt" || { bad=1; warn "действующая настройка sshd отличается от '$kv' (приоритет у более раннего правила)"; }
+    k=${kv% *}; u=${kv#* }
+    cur=$(awk -v k="$k" '$1==k{print $2; exit}' "$bk/sshd-after.txt")
+    [[ "$cur" == "$u" ]] && continue
+    # более строгое числовое значение из другого файла (например MaxAuthTries 3) не мешает
+    if [[ $k == maxauthtries || $k == logingracetime ]] && [[ $cur =~ ^[0-9]+$ ]] && (( cur < u )); then
+      info "SSH: $k уже ограничен строже ($cur) другим файлом sshd_config.d — оставляю его значение"; continue
+    fi
+    bad=1; warn "действующая настройка sshd отличается от '$kv' (приоритет у более раннего правила)"
   done
   for k in port allowtcpforwarding passwordauthentication pubkeyauthentication permitrootlogin kbdinteractiveauthentication authenticationmethods; do
     if [[ "$(grep -E "^$k " "$bk/sshd-before.txt" || true)" != "$(grep -E "^$k " "$bk/sshd-after.txt" || true)" ]]; then
@@ -1808,7 +1834,7 @@ install_check_command() {
     echo '#!/usr/bin/env bash'
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS
-    declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_web gjc_node gjc_system gjc_security gjc_summary \
+    declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_why443 gjc_web gjc_node gjc_system gjc_security gjc_summary \
       goji_check gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
@@ -1847,18 +1873,28 @@ ready() { xhttp_up && ! foreign443; }
 if ! ready; then
   # nginx must not hold 443 while the old profile may still need it
   rm -f "$CONF"; systemctl reload nginx
-  warn "Профиль XHTTP ещё не активен (на 127.0.0.1:$XRAY_PORT никто не слушает)."
+  if foreign443; then
+    warn "Порт 443 занят не nginx: $(ss -Hltnp 'sport = :443' | head -1 | grep -o 'users:.*' | head -1)."
+    echo "    TLS-фронт nginx не сможет занять 443: остановите этот сервис или перенесите его на другой порт."
+  fi
+  if xhttp_up; then
+    ok "Профиль XHTTP активен (127.0.0.1:$XRAY_PORT слушает)."
+  else
+    warn "Профиль XHTTP ещё не активен (на 127.0.0.1:$XRAY_PORT никто не слушает)."
+  fi
   show_profile
-  echo "    Переключите профиль этой ноды в Remnawave на XHTTP"
-  echo "    (inbound 127.0.0.1:$XRAY_PORT, xhttp, path $XPATH) и обновите хост."
-  info "Жду профиль XHTTP до $WAIT с..."
+  if ! xhttp_up; then
+    echo "    Переключите профиль этой ноды в Remnawave на XHTTP"
+    echo "    (inbound 127.0.0.1:$XRAY_PORT, xhttp, path $XPATH) и обновите хост."
+  fi
+  info "Жду готовности (профиль XHTTP и свободный порт 443) до $WAIT с..."
   for ((i = 0; i < WAIT; i += 5)); do
     ready && break
     sleep 5
   done
   if ! ready; then
-    warn "Профиль XHTTP не появился. Старый профиль продолжает работать; TLS-фронт nginx ещё не включён."
-    echo "    После переключения профиля выполните:  bash install.sh --resume   (состояние: goji-node)"
+    warn "Условия не выполнены (профиль XHTTP / порт 443). Старый профиль продолжает работать; TLS-фронт nginx ещё не включён."
+    echo "    Когда профиль переключён и порт 443 свободен, выполните:  bash install.sh --resume   (состояние: goji-node)"
     exit 2
   fi
 fi
