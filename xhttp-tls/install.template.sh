@@ -12,10 +12,7 @@
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
 #                            [--upgrade-os|--no-upgrade-os]
-#                            [--panel-url https://panel.example.com] [--panel-node NAME]
-#                            [--panel-profile NAME] [--panel-host REMARK] [--panel-squad NAME]...
-#                            [--panel-overwrite-profile] [--no-panel]   (токен: env GOJI_PANEL_TOKEN)
-#   bash install.sh --check | --resume | --version
+#   bash install.sh --check | --settings | --resume | --version
 # После установки: goji-node — меню проверки, профиль для Remnawave, смена заглушки.
 #
 # Переустанавливает Remnawave Node (docker, /opt/remnanode), спрашивая SECRET_KEY и т. д.
@@ -46,18 +43,12 @@ GUARD_MODE=""
 GUARD_ON=0
 UPGRADE_MODE=""
 UPGRADE_ON=0
-PANEL_URL=""
-PANEL_TOKEN="${GOJI_PANEL_TOKEN:-}"
-PANEL_NODE=""
 PANEL_PROFILE="Goji XHTTP-TLS"
-PANEL_HOST=""
-PANEL_SQUADS=()
-PANEL_OVERWRITE=0
-PANEL_MODE=""
-PANEL_DONE=0
 PROFILE_SHOWN=0
 RESUME=0
 CHECK=0
+SETTINGS=0
+ARGC=$#
 
 die()  { echo -e "\e[31m[x] $*\e[0m" >&2; exit 1; }
 info() { echo -e "\e[36m[*] $*\e[0m"; }
@@ -155,7 +146,6 @@ gjc_node() {
   else
     gj_row warn "Remnawave Node (docker)" "не устанавливался этим скриптом (--skip-node)"
   fi
-  if [[ -n ${GOJI_PANEL_URL:-} ]]; then gj_row ok "Панель Remnawave" "автонастройка: $GOJI_PANEL_URL (goji-panel sync)"; else gj_row warn "Панель Remnawave" "профиль и хост создаются вручную (пункт «Профиль для Remnawave»)"; fi
 }
 
 gjc_system() {
@@ -213,6 +203,42 @@ goji_check() {
     all|*)    gjc_web; gjc_node; gjc_system; gjc_security ;;
   esac
   gjc_summary
+}
+
+gj_kv() { local pad=$((32 - ${#1})); (( pad < 1 )) && pad=1; printf '  %s%*s %s\n' "$1" "$pad" "" "$2"; }
+
+# Параметры, с которыми сервер был установлен (/etc/goji-node/install.conf) и текущее состояние.
+goji_show_settings() {
+  gjc_load || return 1
+  local yn_h yn_g yn_u tpl v
+  yn_h=$([[ ${GOJI_HARDEN:-1} -eq 1 ]] && echo да || echo нет)
+  yn_g=$([[ ${GOJI_GUARD:-0} -eq 1 ]] && echo да || echo нет)
+  yn_u=$([[ ${GOJI_UPGRADE:-0} -eq 1 ]] && echo да || echo нет)
+  tpl=$(cat "$GOJI_WEBROOT/.template" 2>/dev/null || true)
+  gj_title "Установленные настройки (${GOJI_ETC}/install.conf)"
+  gj_kv "Версия установщика" "${GOJI_VERSION:-?}"
+  gj_kv "Дата установки/обновления" "$(date -r "$GOJI_ETC/install.conf" '+%Y-%m-%d %H:%M' 2>/dev/null || echo ?)"
+  gj_kv "Домен" "$GOJI_DOMAIN"
+  gj_kv "E-mail Let's Encrypt" "${GOJI_EMAIL:-не задан}"
+  gj_kv "Xray: порт / путь XHTTP" "127.0.0.1:$GOJI_XRAY_PORT  $GOJI_XPATH"
+  gj_kv "Сайт-заглушка" "${tpl:-не определена}${tpl:+ — $(goji_tpl_desc "$tpl")}"
+  gj_kv "Remnawave Node" "$([[ ${GOJI_SKIP_NODE:-0} -eq 1 ]] && echo 'не устанавливалась (--skip-node)' || echo "порт API :${GOJI_NODE_PORT:-?}")"
+  gj_kv "IP панели (для порта ноды)" "${GOJI_PANEL_IP:-не задан}"
+  gj_kv "Имя профиля в Remnawave" "${GOJI_PANEL_PROFILE:-Goji XHTTP-TLS}"
+  gj_kv "Усиление защиты и тюнинг" "$yn_h"
+  if [[ ${GOJI_HARDEN:-1} -eq 1 ]]; then
+    gj_kv "  порт SSH" "${GOJI_SSH_PORT:-определён автоматически}"
+    gj_kv "  ping (входящий echo)" "$([[ ${GOJI_ICMP_DROP:-0} -eq 1 ]] && echo 'полная блокировка' || echo 'лимит 5/с')"
+    gj_kv "  Traffic Control" "$yn_g"
+    gj_kv "  IP администратора" "${GOJI_ADMIN_IPS:-авто (адрес SSH-сессии)}"
+    gj_kv "  дополнительные порты" "${GOJI_EXTRA_PORTS:-нет}"
+  fi
+  gj_kv "Обновление ОС при установке" "$yn_u"
+  gj_kv "nginx" "$(command -v nginx >/dev/null && nginx -v 2>&1 | sed 's#.*/##' || echo 'не установлен')"
+  v=$(command -v docker >/dev/null && docker inspect -f '{{.Config.Image}}' remnanode 2>/dev/null | sed 's#.*/##' || true)
+  gj_kv "Образ ноды" "${v:--}"
+  echo "----------------------------------------------------------------"
+  echo "Пароли и ключи в этом файле не хранятся (SECRET_KEY берётся из compose ноды)."
 }
 
 # Открытые порты и правила файрвола.
@@ -297,7 +323,9 @@ goji_tpl_choose() { # goji_tpl_choose <templates dir> [current]
     done
   } >&2
   while :; do
-    read -r -p "Номер [0]: " pick </dev/tty || { echo random; return 0; }
+    if [[ -n $cur ]]; then read -r -p "Номер [Enter = оставить «$cur»]: " pick </dev/tty || { echo "$cur"; return 0; }
+    else read -r -p "Номер [0]: " pick </dev/tty || { echo random; return 0; }; fi
+    if [[ -z $pick && -n $cur ]]; then echo "$cur"; return 0; fi
     pick=${pick:-0}
     if [[ $pick == 0 ]]; then echo random; return 0; fi
     if [[ $pick =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#names[@]} )); then echo "${names[pick-1]}"; return 0; fi
@@ -324,27 +352,29 @@ goji_menu() {
 
 ================ Goji node — меню ================
   1) Полная проверка настроек
-  2) Сайт, сертификат и nginx
-  3) Нода Remnawave и Xray
-  4) Система: BBR, ZRAM, обновления
-  5) Защита: UFW, Fail2ban, SSH, ping, Traffic Control
-  6) Открытые порты и правила UFW
-  7) Профиль для Remnawave (готовый JSON)
-  8) Сменить сайт-заглушку
-  9) Проверить автопродление сертификата (certbot --dry-run)
+  2) Установленные настройки (с чем ставился сервер)
+  3) Сайт, сертификат и nginx
+  4) Нода Remnawave и Xray
+  5) Система: BBR, ZRAM, обновления
+  6) Защита: UFW, Fail2ban, SSH, ping, Traffic Control
+  7) Открытые порты и правила UFW
+  8) Профиль для Remnawave (готовый JSON)
+  9) Сменить сайт-заглушку
+ 10) Проверить автопродление сертификата (certbot --dry-run)
   0) Выход
 MENU
     read -r -p "Пункт: " c || return 0
     case "$c" in
       1) goji_check all || true ;;
-      2) goji_check web || true ;;
-      3) goji_check node || true ;;
-      4) goji_check system || true ;;
-      5) goji_check security || true ;;
-      6) goji_ports ;;
-      7) goji_show_profile ;;
-      8) goji_decoy ;;
-      9) certbot renew --dry-run ;;
+      2) goji_show_settings ;;
+      3) goji_check web || true ;;
+      4) goji_check node || true ;;
+      5) goji_check system || true ;;
+      6) goji_check security || true ;;
+      7) goji_ports ;;
+      8) goji_show_profile ;;
+      9) goji_decoy ;;
+      10) certbot renew --dry-run ;;
       0|q|"") return 0 ;;
       *) echo "Нет такого пункта." ;;
     esac
@@ -355,10 +385,11 @@ goji_main() {
   case "${1:-menu}" in
     menu)         goji_menu ;;
     check)        shift; goji_check "$@" ;;
+    settings)     goji_show_settings ;;
     ports)        goji_ports ;;
     profile)      goji_show_profile ;;
     decoy)        shift; goji_decoy "$@" ;;
-    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | ports | profile | decoy [имя|random]" ;;
+    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | settings | ports | profile | decoy [имя|random]" ;;
     *)            echo "Неизвестная команда: $1 (goji-node --help)" >&2; return 1 ;;
   esac
 }
@@ -370,6 +401,7 @@ for a in "$@"; do
     --version) echo "goji-node-setup $VERSION"; exit 0 ;;
     --resume)  RESUME=1 ;;
     --check)   CHECK=1 ;;
+    --settings) SETTINGS=1 ;;
   esac
 done
 if [[ $RESUME -eq 1 ]]; then
@@ -379,9 +411,7 @@ if [[ $RESUME -eq 1 ]]; then
   DOMAIN=${GOJI_DOMAIN:-}; EMAIL=${GOJI_EMAIL:-}; XRAY_PORT=${GOJI_XRAY_PORT:-$XRAY_PORT}; XPATH=${GOJI_XPATH:-$XPATH}
   NODE_PORT=${GOJI_NODE_PORT:-}; PANEL_IP=${GOJI_PANEL_IP:-}; SSH_PORT=${GOJI_SSH_PORT:-}
   SKIP_NODE=${GOJI_SKIP_NODE:-0}; HARDEN=${GOJI_HARDEN:-1}; ICMP_DROP=${GOJI_ICMP_DROP:-0}; GUARD_MODE=${GOJI_GUARD:-0}; UPGRADE_MODE=${GOJI_UPGRADE:-0}
-  PANEL_URL=${GOJI_PANEL_URL:-}; PANEL_NODE=${GOJI_PANEL_NODE:-}; PANEL_PROFILE=${GOJI_PANEL_PROFILE:-$PANEL_PROFILE}
-  PANEL_HOST=${GOJI_PANEL_HOST:-}; PANEL_OVERWRITE=${GOJI_PANEL_OVERWRITE:-0}; read -ra PANEL_SQUADS <<< "${GOJI_PANEL_SQUADS:-}"
-  [[ -z $PANEL_URL ]] || PANEL_MODE=1
+  PANEL_PROFILE=${GOJI_PANEL_PROFILE:-$PANEL_PROFILE}
   read -ra ADMIN_IPS <<< "${GOJI_ADMIN_IPS:-}"
   read -ra EXTRA_PORTS <<< "${GOJI_EXTRA_PORTS:-}"
 fi
@@ -405,17 +435,9 @@ while [[ $# -gt 0 ]]; do
     --traffic-control)    GUARD_MODE=1; shift ;;
     --no-traffic-control) GUARD_MODE=0; shift ;;
     --upgrade-os)    UPGRADE_MODE=1; shift ;;
-    --panel-url)     PANEL_URL="$2"; PANEL_MODE=1; shift 2 ;;
-    --panel-token)   PANEL_TOKEN="$2"; warn "--panel-token виден в списке процессов; лучше переменная GOJI_PANEL_TOKEN или скрытый ввод"; shift 2 ;;
-    --panel-node)    PANEL_NODE="$2"; shift 2 ;;
-    --panel-profile) PANEL_PROFILE="$2"; shift 2 ;;
-    --panel-host)    PANEL_HOST="$2"; shift 2 ;;
-    --panel-squad)   PANEL_SQUADS+=("$2"); shift 2 ;;
-    --panel-overwrite-profile) PANEL_OVERWRITE=1; shift ;;
-    --no-panel)      PANEL_MODE=0; PANEL_URL=""; shift ;;
     --no-upgrade-os) UPGRADE_MODE=0; shift ;;
-    --resume|--check) shift ;;
-    -h|--help)   sed -n '2,24p' "$0"; exit 0 ;;
+    --resume|--check|--settings) shift ;;
+    -h|--help)   sed -n '2,21p' "$0"; exit 0 ;;
     -*)          die "неизвестный параметр: $1" ;;
     *)           DOMAIN="$1"; shift ;;
   esac
@@ -423,6 +445,32 @@ done
 
 [[ $EUID -eq 0 ]] || die "запустите от root"
 if [[ $CHECK -eq 1 ]]; then rc=0; goji_check || rc=$?; exit $rc; fi
+if [[ $SETTINGS -eq 1 ]]; then goji_show_settings; exit $?; fi
+
+# Сервер уже настроен этим скриптом, запуск без параметров на терминале: сначала предлагаем
+# проверить установленное, и только потом (по выбору) начинать установку заново.
+if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
+  while :; do
+    cat <<'MENU'
+
+На этом сервере уже есть установка Goji node. Что сделать?
+  1) Проверить настройки сервера (полная проверка)
+  2) Показать установленные настройки
+  3) Открыть меню goji-node (проверки, профиль Remnawave, смена заглушки)
+  4) Переустановить / изменить установку (вопросы заново)
+  0) Выход
+MENU
+    read -r -p "Пункт: " __m </dev/tty || exit 0
+    case "$__m" in
+      1) goji_check all || true ;;
+      2) goji_show_settings ;;
+      3) goji_menu </dev/tty ;;
+      4) break ;;
+      0|q|"") exit 0 ;;
+      *) echo "Нет такого пункта." ;;
+    esac
+  done
+fi
 command -v apt-get >/dev/null || die "поддерживаются только Debian/Ubuntu (apt)"
 [[ "$XPATH" == /*/ ]] || die "--path должен начинаться и заканчиваться на '/'"
 
@@ -460,6 +508,33 @@ ACME=/var/www/acme
 CONF=/etc/nginx/conf.d/xhttp-tls.conf
 ACME_CONF=/etc/nginx/conf.d/xhttp-acme.conf
 LIVE=/etc/letsencrypt/live/$DOMAIN
+
+# ---------------------------------------------------------------- decoy choice (first question)
+# Шаблоны распаковываются и остаются в /usr/share/goji-node/templates: заглушку можно
+# сменить позже командой `goji-node decoy` (или пунктом меню) без повторной установки.
+TPL_DIR=$(mktemp -d)
+trap 'rm -rf "$TPL_DIR"' EXIT
+echo "__TEMPLATES_B64__" | base64 -d | tar -xz -C "$TPL_DIR"
+TEMPLATES=$(ls "$TPL_DIR")
+rm -rf "$GOJI_SHARE/templates"; mkdir -p "$GOJI_SHARE/templates"
+cp -a "$TPL_DIR/." "$GOJI_SHARE/templates/"
+SAVED_TPL=""
+if [[ -f "$WEBROOT/.template" ]]; then
+  SAVED_TPL=$(cat "$WEBROOT/.template")
+  [[ -d "$TPL_DIR/$SAVED_TPL" ]] || { warn "сохранённая заглушка «$SAVED_TPL» больше не существует"; SAVED_TPL=""; }
+fi
+if [[ -z "$TEMPLATE" ]]; then
+  if [[ -r /dev/tty && $RESUME -eq 0 ]]; then
+    TEMPLATE=$(goji_tpl_choose "$TPL_DIR" "$SAVED_TPL")      # первый вопрос установки
+  elif [[ -n "$SAVED_TPL" ]]; then
+    TEMPLATE=$SAVED_TPL                                       # --resume/без терминала: сайт не меняется
+    info "Сайт-заглушка «$TEMPLATE» уже установлена (сменить: goji-node decoy)"
+  fi
+fi
+if [[ -z "$TEMPLATE" || "$TEMPLATE" == random ]]; then
+  TEMPLATE=$(echo "$TEMPLATES" | shuf -n 1)
+fi
+[[ "$TEMPLATE" =~ ^[a-z0-9-]+$ && -d "$TPL_DIR/$TEMPLATE" ]] || die "неизвестная заглушка «$TEMPLATE» (доступны: $(echo $TEMPLATES))"
 
 # ---------------------------------------------------------------- questions
 # Works with "curl ... | bash" too: prompts read from the terminal, not stdin.
@@ -519,23 +594,6 @@ if [[ $HARDEN -eq 1 ]]; then
   GUARD_ON=$GUARD_MODE
 fi
 
-# Remnawave panel: profile, node assignment and host through the panel API (opt-in).
-if [[ "$PANEL_MODE" != 0 ]]; then
-  if [[ -z "$PANEL_URL" && "$PANEL_MODE" != 1 && $RESUME -eq 0 && -r /dev/tty ]]; then
-    read -r -p "Настроить панель Remnawave автоматически через API (профиль, нода, хост)? [y/N]: " __p </dev/tty || true
-    [[ "${__p:-}" =~ ^[yYдД] ]] && PANEL_MODE=1
-  fi
-  if [[ "$PANEL_MODE" == 1 ]]; then
-    [[ -n "$PANEL_URL" ]] || ask PANEL_URL "Адрес панели, например https://panel.example.com" ""
-    PANEL_URL="${PANEL_URL%/}"
-    [[ "$PANEL_URL" =~ ^https?://[^[:space:]]+$ ]] || die "некорректный адрес панели: '$PANEL_URL'"
-    if [[ -z "$PANEL_TOKEN" && $RESUME -eq 0 ]]; then
-      ask PANEL_TOKEN "API-токен панели (ввод скрыт; создаётся в панели: API tokens)" "" secret
-    fi
-    [[ -n "$PANEL_TOKEN" ]] || warn "нет API-токена панели — шаг панели будет пропущен (задайте GOJI_PANEL_TOKEN и запустите с --resume)"
-  fi
-fi
-
 # Installing updates of the current OS release (apt upgrade, not a release upgrade).
 if [[ -z "$UPGRADE_MODE" ]]; then
   UPGRADE_MODE=0
@@ -563,12 +621,7 @@ save_conf() {
     printf 'GOJI_ICMP_DROP=%q\n' "$ICMP_DROP"
     printf 'GOJI_GUARD=%q\n' "$GUARD_ON"
     printf 'GOJI_UPGRADE=%q\n' "$UPGRADE_ON"
-    printf 'GOJI_PANEL_URL=%q\n' "$PANEL_URL"
-    printf 'GOJI_PANEL_NODE=%q\n' "$PANEL_NODE"
     printf 'GOJI_PANEL_PROFILE=%q\n' "$PANEL_PROFILE"
-    printf 'GOJI_PANEL_HOST=%q\n' "$PANEL_HOST"
-    printf 'GOJI_PANEL_OVERWRITE=%q\n' "$PANEL_OVERWRITE"
-    printf 'GOJI_PANEL_SQUADS=%q\n' "${PANEL_SQUADS[*]:-}"
     printf 'GOJI_ADMIN_IPS=%q\n' "${ADMIN_IPS[*]:-}"
     printf 'GOJI_EXTRA_PORTS=%q\n' "${EXTRA_PORTS[*]:-}"
   } > "$CONF_FILE.tmp"
@@ -619,7 +672,7 @@ info "Устанавливаю nginx и certbot"
 pkgs=(nginx certbot curl ca-certificates iproute2)
 NFT_PREINSTALLED=0; command -v nft >/dev/null && NFT_PREINSTALLED=1
 [[ $HARDEN -eq 1 ]] && pkgs+=(nftables)
-pkgs+=(python3-minimal)      # профиль Remnawave (goji-node profile), goji-panel, goji-guard
+pkgs+=(python3-minimal)      # профиль Remnawave (goji-node profile), goji-guard
 apt-get install -y -qq "${pkgs[@]}" >/dev/null
 if [[ $HARDEN -eq 1 && $NFT_PREINSTALLED -eq 0 ]]; then
   systemctl disable nftables.service >/dev/null 2>&1 || true
@@ -636,24 +689,6 @@ fi
 # ---------------------------------------------------------------- decoy site
 # Шаблоны распаковываются и остаются в /usr/share/goji-node/templates: заглушку можно
 # сменить позже командой `goji-node decoy` (или пунктом меню) без повторной установки.
-TPL_DIR=$(mktemp -d)
-trap 'rm -rf "$TPL_DIR"' EXIT
-echo "__TEMPLATES_B64__" | base64 -d | tar -xz -C "$TPL_DIR"
-TEMPLATES=$(ls "$TPL_DIR")
-rm -rf "$GOJI_SHARE/templates"; mkdir -p "$GOJI_SHARE/templates"
-cp -a "$TPL_DIR/." "$GOJI_SHARE/templates/"
-if [[ -z "$TEMPLATE" && -f "$WEBROOT/.template" ]]; then
-  TEMPLATE=$(cat "$WEBROOT/.template")          # сайт не меняется при повторных запусках
-  [[ -d "$TPL_DIR/$TEMPLATE" ]] || { warn "сохранённая заглушка «$TEMPLATE» больше не существует — выбираем заново"; TEMPLATE=""; }
-  [[ -z "$TEMPLATE" ]] || info "Сайт-заглушка «$TEMPLATE» уже установлена (сменить: goji-node decoy)"
-fi
-if [[ -z "$TEMPLATE" && -r /dev/tty ]]; then
-  TEMPLATE=$(goji_tpl_choose "$TPL_DIR" "")
-fi
-if [[ -z "$TEMPLATE" || "$TEMPLATE" == random ]]; then
-  TEMPLATE=$(echo "$TEMPLATES" | shuf -n 1)
-fi
-[[ "$TEMPLATE" =~ ^[a-z0-9-]+$ && -d "$TPL_DIR/$TEMPLATE" ]] || die "неизвестная заглушка «$TEMPLATE» (доступны: $(echo $TEMPLATES))"
 info "Устанавливаю сайт-заглушку «$TEMPLATE» в $WEBROOT"
 mkdir -p "$ACME"
 goji_deploy_decoy "$TEMPLATE" "$TPL_DIR"
@@ -1609,280 +1644,11 @@ UNIT
   fi
 }
 
-# ---------------------------------------------------------------- Remnawave panel (API)
-# Creates/reuses the config profile, makes it active on this node and creates/updates the
-# host - the manual steps from "Профиль Xray в Remnawave" / "Хост в Remnawave" in INSTALL.md.
+# ---------------------------------------------------------------- профиль Remnawave
+# Готовый профиль выводится в конце установки (goji_show_profile); в панель его вставляют вручную.
 install_profile_file() {
   mkdir -p "$GOJI_SHARE"
   echo "__PROFILE_B64__" | base64 -d > "$GOJI_SHARE/xray-node-profile.json"
-}
-
-install_panel_tool() {
-  install_profile_file
-  cat > /usr/local/sbin/goji-panel <<'PYEOF'
-#!/usr/bin/env python3
-"""goji-panel — настройка панели Remnawave для ноды Goji XHTTP+TLS через REST API.
-
-  goji-panel sync --url https://panel.example.com --domain node.example.com [параметры]
-
-Создаёт (или переиспользует) профиль конфигурации, делает его активным профилем этой ноды
-и создаёт или обновляет хост. Ничего не удаляется. API-токен берётся из переменной
-окружения GOJI_PANEL_TOKEN (создаётся в панели: Settings -> API tokens).
-Эндпоинты и поля соответствуют контракту бэкенда Remnawave (проверено по v3.4.4).
-"""
-import argparse
-import json
-import os
-import sys
-import urllib.error
-import urllib.parse
-import urllib.request
-
-PROFILE_FILE = "/usr/share/goji-node/xray-node-profile.json"
-
-
-class ApiError(Exception):
-    pass
-
-
-class Panel:
-    def __init__(self, base, token):
-        self.base = base.rstrip("/")
-        self.token = token
-
-    def call(self, method, path, body=None):
-        url = self.base + path
-        data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(url, data=data, method=method, headers={
-            "Authorization": "Bearer " + self.token,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            # the panel refuses requests that do not look like they came through an HTTPS reverse proxy
-            "X-Forwarded-For": "127.0.0.1",
-            "X-Forwarded-Proto": "https",
-            "User-Agent": "goji-panel/1",
-        })
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                raw = resp.read()
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:400]
-            if exc.code in (401, 403):
-                raise ApiError(f"{method} {path}: HTTP {exc.code} — токен отклонён или не хватает прав. {detail}")
-            raise ApiError(f"{method} {path}: HTTP {exc.code} {detail}")
-        except (urllib.error.URLError, OSError) as exc:
-            raise ApiError(f"{method} {path}: {exc}")
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except ValueError:
-            raise ApiError(f"{method} {path}: ответ не в формате JSON (это точно адрес панели в --url?)")
-
-    def get(self, path):
-        return self.call("GET", path)["response"]
-
-
-def load_profile(xray_port, xpath):
-    with open(PROFILE_FILE, encoding="utf-8") as fh:
-        cfg = json.load(fh)
-    inbound = cfg["inbounds"][0]
-    inbound["port"] = xray_port
-    inbound["streamSettings"]["xhttpSettings"]["path"] = xpath
-    return cfg
-
-
-def log(msg):
-    print(msg, flush=True)
-
-
-def find_inbound(profile, tag):
-    for ib in profile.get("inbounds", []):
-        if ib.get("tag") == tag:
-            return ib
-    return None
-
-
-def sync(args, token):
-    panel = Panel(args.url, token)
-    dry = args.dry_run
-    desired = load_profile(args.xray_port, args.path)
-    tag = desired["inbounds"][0]["tag"]
-
-    # ---- config profile
-    profiles = panel.get("/api/config-profiles")["configProfiles"]
-    prof = next((p for p in profiles if p["name"] == args.profile_name), None)
-    if prof is None:
-        log(f"[*] профиль '{args.profile_name}': создаю")
-        if dry:
-            prof = {"uuid": "(new)", "inbounds": [{"uuid": "(new)", "tag": tag}], "config": desired}
-        else:
-            prof = panel.call("POST", "/api/config-profiles", {"name": args.profile_name, "config": desired})["response"]
-        log("[+] профиль создан")
-    elif prof.get("config") == desired:
-        log(f"[+] профиль '{args.profile_name}': уже актуален")
-    elif args.overwrite_profile:
-        log(f"[*] профиль '{args.profile_name}': отличается от профиля Goji, перезаписываю (--panel-overwrite-profile)")
-        if not dry:
-            prof = panel.call("PATCH", "/api/config-profiles", {"uuid": prof["uuid"], "config": desired})["response"]
-        log("[+] профиль обновлён")
-    else:
-        log(f"[!] профиль '{args.profile_name}' уже есть и отличается от профиля Goji; оставляю как есть "
-            "(чтобы заменить конфиг, используйте --panel-overwrite-profile)")
-    inbound = find_inbound(prof, tag)
-    if inbound is None:
-        raise ApiError(f"в профиле '{args.profile_name}' нет inbound с тегом '{tag}'")
-    live_cfg = prof.get("config") if isinstance(prof.get("config"), dict) else desired
-    live_port = (live_cfg.get("inbounds") or [{}])[0].get("port")
-    if live_port != args.xray_port:
-        log(f"[!] существующий профиль слушает порт {live_port}, а nginx будет проксировать на {args.xray_port}: "
-            "запустите заново с --xray-port или --panel-overwrite-profile")
-
-    # ---- node
-    node = None
-    nodes = panel.get("/api/nodes")
-    if args.node:
-        node = next((n for n in nodes if args.node in (n["name"], n["uuid"])), None)
-        if node is None:
-            raise ApiError(f"нода '{args.node}' не найдена в панели")
-    else:
-        addrs = {a.lower() for a in args.node_address if a}
-        cand = [n for n in nodes if n["address"].lower() in addrs]
-        if len(cand) == 1:
-            node = cand[0]
-        elif len(cand) > 1:
-            names = ", ".join(n["name"] for n in cand)
-            raise ApiError(f"этому серверу соответствуют несколько нод ({names}); выберите одну через --panel-node")
-    if node is None:
-        log("[!] в панели не найдена нода с адресом этого сервера; профиль и хост готовы, "
-            "назначьте профиль ноде вручную (или укажите --panel-node ИМЯ)")
-    else:
-        active = node["configProfile"]["activeConfigProfileUuid"]
-        active_ib = {i["uuid"] for i in node["configProfile"]["activeInbounds"]}
-        if active == prof["uuid"] and inbound["uuid"] in active_ib:
-            log(f"[+] нода '{node['name']}': профиль уже активен")
-        else:
-            log(f"[*] нода '{node['name']}': переключаю активный профиль "
-                f"(был {active or 'нет'}) — Xray на ноде перезапустится")
-            if not dry:
-                panel.call("PATCH", "/api/nodes", {"uuid": node["uuid"], "configProfile": {
-                    "activeConfigProfileUuid": prof["uuid"], "activeInbounds": [inbound["uuid"]]}})
-            log("[+] профиль ноды переключён")
-
-    # ---- host
-    remark = args.host_remark or f"Goji {args.domain}"
-    fields = {
-        "remark": remark, "address": args.domain, "port": 443, "path": args.path, "sni": args.domain,
-        "alpn": "h2", "fingerprint": "firefox", "securityLayer": "TLS", "isDisabled": False,
-        "inbound": {"configProfileUuid": prof["uuid"], "configProfileInboundUuid": inbound["uuid"]},
-    }
-    hosts = panel.get("/api/hosts")
-    host = next((h for h in hosts if h["remark"] == remark), None) or next(
-        (h for h in hosts if h["address"].lower() == args.domain and h["port"] == 443 and h.get("path") == args.path), None)
-    nodes_field = sorted(set((host or {}).get("nodes", [])) | ({node["uuid"]} if node else set()))
-    if nodes_field:
-        fields["nodes"] = nodes_field
-    if host is None:
-        log(f"[*] хост '{remark}': создаю")
-        if not dry:
-            host = panel.call("POST", "/api/hosts", fields)["response"]
-        log("[+] хост создан")
-    else:
-        changed = {k: v for k, v in fields.items()
-                   if (sorted(host.get(k) or []) != v if k == "nodes" else host.get(k) != v)}
-        if not changed:
-            log(f"[+] хост '{host['remark']}': уже актуален")
-        else:
-            log(f"[*] хост '{host['remark']}': обновляю {', '.join(sorted(changed))}")
-            if not dry:
-                panel.call("PATCH", "/api/hosts", {"uuid": host["uuid"], **fields})
-            log("[+] хост обновлён")
-
-    # ---- squads (users only receive hosts of inbounds that are in their internal squad)
-    if args.squad:
-        squads = panel.get("/api/internal-squads")["internalSquads"]
-        for name in args.squad:
-            sq = next((s for s in squads if s["name"] == name), None)
-            if sq is None:
-                log(f"[!] internal squad '{name}' не найден — пропущен")
-                continue
-            have = [i["uuid"] for i in sq["inbounds"]]
-            if inbound["uuid"] in have:
-                log(f"[+] squad '{name}': inbound уже включён")
-                continue
-            log(f"[*] squad '{name}': добавляю inbound (существующие сохраняются)")
-            if not dry:
-                panel.call("PATCH", "/api/internal-squads", {"uuid": sq["uuid"], "inbounds": have + [inbound["uuid"]]})
-            log("[+] squad обновлён")
-    else:
-        log("[i] --panel-squad не задан: пользователи получат этот хост только после добавления inbound в internal squad")
-    if dry:
-        log("[i] пробный запуск: ничего не изменено")
-    return 0
-
-
-def main(argv=None):
-    ap = argparse.ArgumentParser(prog="goji-panel", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("sync", help="создать/обновить профиль, назначение ноде и хост")
-    s.add_argument("--url", required=True, help="адрес панели, например https://panel.example.com")
-    s.add_argument("--domain", required=True)
-    s.add_argument("--xray-port", type=int, default=10443)
-    s.add_argument("--path", default="/api/v2/telemetry/")
-    s.add_argument("--node", default="", help="имя или uuid ноды (по умолчанию ищется по --node-address)")
-    s.add_argument("--node-address", action="append", default=[], help="адрес(а), с которыми нода зарегистрирована")
-    s.add_argument("--profile-name", default="Goji XHTTP-TLS")
-    s.add_argument("--host-remark", default="")
-    s.add_argument("--squad", action="append", default=[], help="имя internal squad, в который добавить inbound (можно повторять)")
-    s.add_argument("--overwrite-profile", action="store_true")
-    s.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args(argv)
-    token = os.environ.get("GOJI_PANEL_TOKEN", "").strip()
-    if not token:
-        print("переменная GOJI_PANEL_TOKEN не задана", file=sys.stderr)
-        return 1
-    args.domain = args.domain.lower()
-    if not urllib.parse.urlparse(args.url).scheme in ("http", "https"):
-        print("--url должен начинаться с http:// или https://", file=sys.stderr)
-        return 1
-    try:
-        return sync(args, token)
-    except ApiError as exc:
-        print(f"[x] {exc}", file=sys.stderr)
-        return 1
-    except (OSError, ValueError, KeyError) as exc:
-        print(f"[x] неожиданный ответ или локальная ошибка: {exc!r}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-PYEOF
-  chmod 755 /usr/local/sbin/goji-panel
-}
-
-panel_sync() {
-  [[ -n "$PANEL_URL" ]] || return 0
-  if [[ -z "$PANEL_TOKEN" ]]; then
-    warn "шаг панели пропущен: нет API-токена (GOJI_PANEL_TOKEN). Позже: GOJI_PANEL_TOKEN=... goji-panel sync --url $PANEL_URL --domain $DOMAIN"
-    return 0
-  fi
-  command -v python3 >/dev/null || { warn "нет python3 — шаг панели пропущен"; return 0; }
-  install_panel_tool
-  local args=(sync --url "$PANEL_URL" --domain "$DOMAIN" --xray-port "$XRAY_PORT" --path "$XPATH"
-              --profile-name "$PANEL_PROFILE" --node-address "$DOMAIN" --node-address "${MY_IP:-}" --node-address "${DNS_IP:-}")
-  [[ -z "$PANEL_NODE" ]] || args+=(--node "$PANEL_NODE")
-  [[ -z "$PANEL_HOST" ]] || args+=(--host-remark "$PANEL_HOST")
-  [[ $PANEL_OVERWRITE -eq 0 ]] || args+=(--overwrite-profile)
-  local sq
-  for sq in "${PANEL_SQUADS[@]}"; do args+=(--squad "$sq"); done
-  info "Настраиваю панель Remnawave ($PANEL_URL)"
-  if GOJI_PANEL_TOKEN="$PANEL_TOKEN" /usr/local/sbin/goji-panel "${args[@]}"; then
-    ok "панель настроена: профиль, нода и хост"
-    PANEL_DONE=1
-  else
-    warn "настройка панели не удалась — сделайте вручную (профиль ниже, INSTALL.md) или устраните причину и запустите: bash install.sh --resume"
-  fi
 }
 
 # Команда `goji-node` (меню и проверка) и совместимая обёртка goji-node-check.
@@ -1892,7 +1658,7 @@ install_check_command() {
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT
     declare -f gj_row gj_title gjc_load goji_tpl_desc gjc_web gjc_node gjc_system gjc_security gjc_summary \
-      goji_check goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
+      goji_check gj_kv goji_show_settings goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
@@ -1912,7 +1678,6 @@ else
 fi
 install_profile_file
 install_check_command
-panel_sync
 
 # Готовый профиль для Remnawave: показываем сразу, пока он нужен для переключения ноды.
 show_profile() {
@@ -1932,7 +1697,7 @@ if ! ready; then
   # nginx must not hold 443 while the old profile may still need it
   rm -f "$CONF"; systemctl reload nginx
   warn "Профиль XHTTP ещё не активен (на 127.0.0.1:$XRAY_PORT никто не слушает)."
-  [[ $PANEL_DONE -eq 1 ]] || show_profile
+  show_profile
   echo "    Переключите профиль этой ноды в Remnawave на XHTTP"
   echo "    (inbound 127.0.0.1:$XRAY_PORT, xhttp, path $XPATH) и обновите хост."
   info "Жду профиль XHTTP до $WAIT с..."
