@@ -22,7 +22,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.2.0
+VERSION=1.3.0
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -226,6 +226,26 @@ gjc_why443() {
   echo "nginx слушает :443, но запрос не прошёл: ${err:-нет ответа}"
 }
 
+# Чужой SNI: на запрос с именем чужого сайта сервер не должен отвечать его сертификатом
+# (так ведёт себя REALITY; провайдеры, например Astra VPS, требуют только собственный домен).
+gjc_sni() {
+  local port=${GOJI_SNI_PORT:-443} out pem
+  command -v openssl >/dev/null || return 0
+  if ! ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; then
+    gj_row warn "Чужой SNI (www.apple.com)" "не проверен: на :$port никто не слушает"; return 0
+  fi
+  out=$(timeout 8 openssl s_client -connect "127.0.0.1:$port" -servername www.apple.com </dev/null 2>/dev/null || true)
+  pem=$(sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' <<< "$out" | sed '/END CERTIFICATE/q')
+  if [[ -z $pem ]]; then
+    gj_row ok "Чужой SNI (www.apple.com)" "рукопожатие с чужим именем отклоняется"
+  elif openssl x509 -noout -text <<< "$pem" 2>/dev/null | grep -q "$GOJI_DOMAIN"; then
+    gj_row ok "Чужой SNI (www.apple.com)" "отдаётся только ваш сертификат, чужой не подставляется"
+  else
+    gj_row fail "Чужой SNI (www.apple.com)" "сервер отвечает чужим сертификатом: $(openssl x509 -noout -subject <<< "$pem" 2>/dev/null | sed 's/^subject= *//') — похоже на REALITY; провайдер требует свой домен"
+    GJ_FAIL=1
+  fi
+}
+
 gjc_web() {
   local code end days
   gj_title "Сайт, сертификат и nginx — $GOJI_DOMAIN"
@@ -258,6 +278,7 @@ gjc_web() {
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/goji-check-nope" 2>/dev/null || true)
   if [[ $code == 404 ]]; then gj_row ok "Неизвестный путь" "HTTP 404"; else gj_row warn "Неизвестный путь" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code"), ожидался 404"; fi
   if [[ -f $GOJI_WEBROOT/.template ]]; then gj_row ok "Заглушка" "$(cat "$GOJI_WEBROOT/.template") — $(goji_tpl_desc "$(cat "$GOJI_WEBROOT/.template")")"; else gj_row warn "Заглушка" "не определена"; fi
+  gjc_sni
 }
 
 gjc_node() {
@@ -2115,7 +2136,7 @@ install_check_command() {
     echo '#!/usr/bin/env bash'
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION
-    declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_web gjc_node gjc_system gjc_security gjc_summary \
+    declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
       goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
