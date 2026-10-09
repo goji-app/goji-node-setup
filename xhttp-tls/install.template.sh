@@ -22,7 +22,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.3.1
+VERSION=1.3.2
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -339,11 +339,43 @@ gjc_nodeport() {
   fi
 }
 
+# Порты, которые контейнеры Docker публикуют на все адреса (0.0.0.0 / ::). Docker вставляет свои
+# правила iptables раньше UFW, поэтому такие порты открыты в интернет даже при «deny incoming».
+# Печатает строки «контейнер<TAB>порт/протокол».
+gj_docker_public() {
+  command -v docker >/dev/null 2>&1 || return 0
+  docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null | while IFS=$'\t' read -r name ports; do
+    grep -oE '(0\.0\.0\.0|\[::\]|::):[0-9]+(-[0-9]+)?->[0-9]+(-[0-9]+)?/(tcp|udp)' <<< "$ports" \
+      | sed -E 's/^.*:([0-9]+(-[0-9]+)?)->.*\/(tcp|udp)$/\1\/\3/' | sort -u | sed "s/^/$name\t/"
+  done
+}
+
+gj_ufw_allows() { # gj_ufw_allows <порт/протокол>: порт открыт всем и в самом UFW
+  ufw status 2>/dev/null | grep -qE "^${1%%/*}(/${1##*/})?( \(v6\))?[[:space:]]+ALLOW( IN)?[[:space:]]+Anywhere"
+}
+
+gjc_docker() {
+  local name pa n=0
+  while IFS=$'\t' read -r name pa; do
+    [[ -n $pa ]] || continue
+    n=$((n + 1))
+    if gj_ufw_allows "$pa"; then
+      gj_row warn "Docker: $name публикует $pa" "открыт в интернет (разрешён и в UFW — если так задумано, всё в порядке)"
+    else
+      gj_row fail "Docker: $name публикует $pa" "открыт в интернет, хотя UFW его не разрешает: правила Docker идут раньше UFW → в compose укажите адрес \"127.0.0.1:${pa%%/*}:…\" (или 172.17.0.1 для доступа из контейнеров)"
+      GJ_FAIL=1
+    fi
+  done < <(gj_docker_public)
+  (( n )) || { command -v docker >/dev/null 2>&1 && gj_row ok "Docker: опубликованные порты" "наружу ничего не опубликовано"; }
+  return 0
+}
+
 gjc_security() {
   gj_title "Защита: UFW, Fail2ban, SSH, ping, Traffic Control"
   if [[ ${GOJI_HARDEN:-1} -ne 1 ]]; then gj_row warn "Усиление защиты" "пропущено (--skip-hardening)"; return 0; fi
   if ufw status 2>/dev/null | grep -q "Status: active"; then gj_row ok "UFW" "включён, входящие закрыты по умолчанию"; else gj_row warn "UFW" "не включён"; fi
   gjc_nodeport
+  gjc_docker
   if fail2ban-client ping >/dev/null 2>&1; then gj_row ok "Fail2ban" "работает (sshd, recidive)"; else gj_row warn "Fail2ban" "не отвечает"; fi
   local sshv
   sshv=$(sshd -T 2>/dev/null | awk '$1=="maxauthtries"{print $2}')
@@ -503,6 +535,12 @@ goji_fix() {
         gjf_manual "Порт API ноды :$GOJI_NODE_PORT открыт всем" "IP панели не сохранён: bash install.sh --resume --panel-ip <IP панели>"
       fi
     fi
+    # чужие контейнеры скрипт не пересоздаёт: только объясняет, что поменять
+    while IFS=$'\t' read -r n l; do
+      [[ -n $l ]] && ! gj_ufw_allows "$l" || continue
+      gjf_manual "Docker: $n публикует $l на все адреса (UFW это не закрывает)" \
+        "в compose/команде запуска замените «${l%%/*}:…» на «127.0.0.1:${l%%/*}:…» (или 172.17.0.1:…) и пересоздайте контейнер"
+    done < <(gj_docker_public)
     if [[ -f /etc/systemd/system/goji-two-way-ping.service ]] && ! nft list table inet goji_privacy >/dev/null 2>&1; then
       gjf_do "Защита от ping не загружена" systemctl restart goji-two-way-ping.service || true
     fi
@@ -2174,7 +2212,7 @@ install_check_command() {
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION
     declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
-      gj_nodeport_public gj_nodeport_close gjc_nodeport goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
+      gj_nodeport_public gj_nodeport_close gjc_nodeport gj_docker_public gj_ufw_allows gjc_docker goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
