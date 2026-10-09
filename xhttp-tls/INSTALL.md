@@ -1,7 +1,7 @@
 # XHTTP + TLS нода — установка
 
 Схема: клиент → `<домен>:443` (TLS, h2) → nginx →
-`/api/v2/telemetry/` → Xray `127.0.0.1:10443` (XHTTP, security none).
+случайный путь XHTTP (свой на каждом сервере, `--path`) → Xray `127.0.0.1:10443` (XHTTP, security none).
 Всё остальное nginx отдаёт как сайт-заглушку.
 
 ## Установка (на VPS, от root)
@@ -109,7 +109,7 @@ bash install.sh --resume       # повторить установку с сох
 |---|---|
 | Адрес / порт | <домен> / 443 |
 | Network | xhttp |
-| Path | /api/v2/telemetry/ |
+| Path | путь из вывода установщика (`goji-node profile`) |
 | Mode | auto |
 | Security | tls |
 | SNI | <домен> |

@@ -3,7 +3,7 @@
 #
 # Использование:
 #   bash install.sh [домен] [--email you@example.com] [--xray-port 10443]
-#                            [--path /api/v2/telemetry/] [--wait 900]
+#                            [--path /свой/путь/|random] [--wait 900]
 #                            [--secret-key KEY] [--node-port 2222]
 #                            [--panel-ip 1.2.3.4] [--skip-node]
 #                            [--template random|analytics|blog|docs|saas|freelancer|resume|
@@ -22,12 +22,15 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.3.3
+VERSION=1.3.4
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
 XRAY_PORT=10443
-XPATH="/api/v2/telemetry/"
+# Путь XHTTP: пусто = сохранённый (переустановка) или случайный (новая установка); random = новый случайный.
+# Общий для всех путь из публичного репозитория позволял найти ноду, просто запросив его.
+XPATH=""
+XPATH_PUBLIC_DEFAULT="/api/v2/telemetry/"
 WAIT=900
 SECRET_KEY=""
 NODE_PORT=""
@@ -290,6 +293,11 @@ gjc_node() {
     gj_row ok "Xray XHTTP 127.0.0.1:$GOJI_XRAY_PORT" "слушает"
   else
     gj_row warn "Xray XHTTP 127.0.0.1:$GOJI_XRAY_PORT" "профиль в панели ещё не применён"; GJ_PENDING=1
+  fi
+  if [[ $GOJI_XPATH == /api/v2/telemetry/ ]]; then
+    gj_row warn "Путь XHTTP" "$GOJI_XPATH — общий из публичного репозитория, ноду по нему легко найти; новый: bash install.sh --resume --path random, затем профиль и хост в Remnawave"
+  else
+    gj_row ok "Путь XHTTP" "свой для этого сервера"
   fi
   if [[ -n ${GOJI_NODE_PORT:-} ]]; then
     if command -v docker >/dev/null && [[ "$(docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null)" == true ]]; then
@@ -663,7 +671,7 @@ goji_deploy_decoy() { # goji_deploy_decoy <name> <templates dir>
 <body><div><h1>404 Not Found</h1><p><a href="/">Home</a></p></div></body></html>
 EOF404
   fi
-  [[ -f "$GOJI_WEBROOT/robots.txt" ]] || printf 'User-agent: *\nDisallow: /api/\n' > "$GOJI_WEBROOT/robots.txt"
+  [[ -f "$GOJI_WEBROOT/robots.txt" ]] || printf 'User-agent: *\nAllow: /\n' > "$GOJI_WEBROOT/robots.txt"
   echo "$name" > "$GOJI_WEBROOT/.template"
   chown -R www-data:www-data "$GOJI_WEBROOT" 2>/dev/null || true
 }
@@ -1029,6 +1037,29 @@ if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
   done
 fi
 command -v apt-get >/dev/null || die "поддерживаются только Debian/Ubuntu (apt)"
+
+# Случайный путь, похожий на обычный API/статический путь сайта: /<раздел>/<имя>/<12 hex>/
+gen_xpath() {
+  local a b h
+  a=$(shuf -n 1 -e api static assets cdn media content app data files)
+  b=$(shuf -n 1 -e v1 v2 v3 events sync stream upload metrics feed updates push chunks session)
+  h=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
+  echo "/$a/$b/$h/"
+}
+XPATH_OLD=""
+# shellcheck disable=SC1090
+[[ -r $CONF_FILE ]] && XPATH_OLD=$(. "$CONF_FILE" 2>/dev/null; echo "${GOJI_XPATH:-}")
+if [[ $XPATH == random ]]; then
+  XPATH=$(gen_xpath)
+elif [[ -z $XPATH ]]; then
+  XPATH=$XPATH_OLD                      # переустановка: клиенты и хост в Remnawave уже знают этот путь
+  [[ -n $XPATH ]] || XPATH=$(gen_xpath)
+fi
+if [[ -n $XPATH_OLD && $XPATH != "$XPATH_OLD" ]]; then
+  warn "путь XHTTP меняется: $XPATH_OLD → $XPATH. Обновите профиль ноды и хост в Remnawave (профиль покажу ниже), иначе клиенты не подключатся"
+elif [[ $XPATH == "$XPATH_PUBLIC_DEFAULT" ]]; then
+  warn "путь XHTTP $XPATH — общий по умолчанию из публичного репозитория: по нему ноду легко найти. Новый случайный: --path random (затем обновите профиль и хост в Remnawave)"
+fi
 [[ "$XPATH" == /*/ ]] || die "--path должен начинаться и заканчиваться на '/'"
 
 # ---------------------------------------------------------------- lock, signals, preflight
