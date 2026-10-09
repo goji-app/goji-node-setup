@@ -11,7 +11,7 @@
 #                            [--skip-hardening] [--icmp-drop] [--ssh-port N]
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
-#                            [--upgrade-os|--no-upgrade-os]
+#                            [--upgrade-os|--no-upgrade-os] [--ssh-keys-only|--no-ssh-keys-only]
 #   bash install.sh --check | --fix | --settings | --uninstall | --resume | --version
 #   --fix: найти ошибки и исправить безопасные автоматически (goji-node fix [--dry-run] — то же без переустановки)
 # После установки: goji-node — меню проверки, профиль для Remnawave, смена заглушки.
@@ -22,7 +22,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.3.2
+VERSION=1.3.3
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -43,6 +43,8 @@ ADMIN_IPS=()
 GUARD_MODE=""
 GUARD_ON=0
 UPGRADE_MODE=""
+KEYS_MODE=""
+KEYS_ON=0
 UPGRADE_ON=0
 PANEL_PROFILE="Goji XHTTP-TLS"
 PROFILE_SHOWN=0
@@ -387,6 +389,10 @@ gjc_security() {
   else
     gj_row warn "SSH" "файл есть, но sshd применяет MaxAuthTries ${sshv:-?}: другое правило имеет приоритет (sshd -T | grep -i maxauth)"
   fi
+  local pa
+  pa=$(sshd -T 2>/dev/null | awk '$1=="passwordauthentication"{print $2}')
+  if [[ $pa == no ]]; then gj_row ok "SSH: вход по паролю" "запрещён — только по ключу$([[ -f /etc/ssh/sshd_config.d/00-goji-keys-only.conf ]] || echo ' (задано не установщиком)')"
+  elif [[ -n $pa ]]; then gj_row warn "SSH: вход по паролю" "разрешён — от подбора защищает только Fail2ban; только ключи: bash install.sh --resume --ssh-keys-only"; fi
   if nft list table inet goji_privacy >/dev/null 2>&1; then
     gj_row ok "Защита от ping" "echo-request: $(grep -qs 'MODE=drop' /etc/default/goji-two-way-ping && echo блок || echo 'лимит 5/с'), timestamp: блок"
   else
@@ -584,6 +590,7 @@ goji_show_settings() {
   gj_kv "Усиление защиты и тюнинг" "$yn_h"
   if [[ ${GOJI_HARDEN:-1} -eq 1 ]]; then
     gj_kv "  порт SSH" "${GOJI_SSH_PORT:-определён автоматически}"
+    gj_kv "  вход по SSH" "$([[ ${GOJI_SSH_KEYS_ONLY:-0} -eq 1 ]] && echo 'только по ключу' || echo 'способ входа не менялся')"
     gj_kv "  ping (входящий echo)" "$([[ ${GOJI_ICMP_DROP:-0} -eq 1 ]] && echo 'полная блокировка' || echo 'лимит 5/с')"
     gj_kv "  Traffic Control" "$yn_g"
     gj_kv "  IP администратора" "${GOJI_ADMIN_IPS:-авто (адрес SSH-сессии)}"
@@ -717,7 +724,7 @@ gju_desc() {
     ping)     echo "Защита от ping (nftables goji_privacy, служба goji-two-way-ping)" ;;
     guard)    echo "Traffic Control (goji-guard, списки сканеров, таймер обновления)" ;;
     tuning)   echo "Тюнинг: sysctl, tc fq, ZRAM-swap (BBR/fq и др.)" ;;
-    ssh)      echo "Усиление SSH (файл sshd_config.d/00-goji-hardening.conf)" ;;
+    ssh)      echo "Усиление SSH (файлы sshd_config.d/00-goji-hardening.conf и 00-goji-keys-only.conf — вход по паролю снова разрешится)" ;;
     fail2ban) echo "Fail2ban: jail sshd/recidive от Goji (пакет остаётся)" ;;
     ufw)      echo "Правила UFW установщика: 80, 443, порт ноды, доп. порты (SSH и политика по умолчанию не трогаются)" ;;
     tools)    echo "Команда goji-node, сохранённые настройки и шаблоны (/etc/goji-node, /usr/share/goji-node)" ;;
@@ -772,8 +779,8 @@ gju_do() {
       gj_row ok "Тюнинг" "файлы и службы удалены; значения sysctl и qdisc полностью вернутся после перезагрузки" ;;
     ssh)
       f=/etc/ssh/sshd_config.d/00-goji-hardening.conf
-      if [[ -e $f ]]; then
-        rm -f "$f"
+      if [[ -e $f || -e /etc/ssh/sshd_config.d/00-goji-keys-only.conf ]]; then
+        rm -f "$f" /etc/ssh/sshd_config.d/00-goji-keys-only.conf
         if sshd -t 2>/dev/null; then
           for svc in ssh sshd; do systemctl reload "$svc" >/dev/null 2>&1 && break; done
           gj_row ok "Усиление SSH" "снято, sshd перечитал конфигурацию"
@@ -942,6 +949,7 @@ load_resume() {
   DOMAIN=${GOJI_DOMAIN:-}; EMAIL=${GOJI_EMAIL:-}; XRAY_PORT=${GOJI_XRAY_PORT:-$XRAY_PORT}; XPATH=${GOJI_XPATH:-$XPATH}
   NODE_PORT=${GOJI_NODE_PORT:-}; PANEL_IP=${GOJI_PANEL_IP:-}; SSH_PORT=${GOJI_SSH_PORT:-}
   SKIP_NODE=${GOJI_SKIP_NODE:-0}; HARDEN=${GOJI_HARDEN:-1}; ICMP_DROP=${GOJI_ICMP_DROP:-0}; GUARD_MODE=${GOJI_GUARD:-0}; UPGRADE_MODE=${GOJI_UPGRADE:-0}
+  KEYS_MODE=${GOJI_SSH_KEYS_ONLY:-0}
   PANEL_PROFILE=${GOJI_PANEL_PROFILE:-$PANEL_PROFILE}
   read -ra ADMIN_IPS <<< "${GOJI_ADMIN_IPS:-}"
   read -ra EXTRA_PORTS <<< "${GOJI_EXTRA_PORTS:-}"
@@ -968,6 +976,8 @@ while [[ $# -gt 0 ]]; do
     --no-traffic-control) GUARD_MODE=0; shift ;;
     --upgrade-os)    UPGRADE_MODE=1; shift ;;
     --no-upgrade-os) UPGRADE_MODE=0; shift ;;
+    --ssh-keys-only)    KEYS_MODE=1; shift ;;
+    --no-ssh-keys-only) KEYS_MODE=0; shift ;;
     --resume|--check|--fix|--settings|--uninstall) shift ;;
     -h|--help)   sed -n '2,22p' "$0"; exit 0 ;;
     -*)          die "неизвестный параметр: $1" ;;
@@ -1130,6 +1140,110 @@ if [[ $SKIP_NODE -eq 0 ]]; then
   if [[ -z "$EMAIL" && $RESUME -eq 0 ]]; then ask EMAIL "E-mail для Let's Encrypt (Enter = без e-mail)" ""; fi
 fi
 
+# ---------------------------------------------------------------- SSH: login by key only (opt-in)
+# Password and keyboard-interactive login are switched off only when the user of this
+# session has keys in authorized_keys and the session itself did not log in with a password.
+SSH_KEYS_DROPIN=/etc/ssh/sshd_config.d/00-goji-keys-only.conf
+
+# How the current SSH session logged in (publickey, password, keyboard-interactive) or empty.
+ssh_session_method() {
+  local cport
+  [[ -n ${SSH_CONNECTION:-} ]] || return 0
+  cport=$(awk '{print $2}' <<< "$SSH_CONNECTION")
+  { journalctl -q --no-pager -o cat -S -7d -t sshd -t sshd-session 2>/dev/null; cat /var/log/auth.log 2>/dev/null; } \
+    | grep -E "Accepted [a-z-]+ for .* port $cport( |$)" | tail -1 \
+    | awk '{for (i = 1; i < NF; i++) if ($i == "Accepted") { print $(i + 1); exit }}' || true
+}
+
+# ssh_key_count <user>: valid keys in the user's AuthorizedKeysFile(s).
+ssh_key_count() {
+  local u=$1 home f n=0 files
+  home=$(getent passwd "$u" | cut -d: -f6)
+  [[ -n $home ]] || { echo 0; return 0; }
+  files=$(sshd -T 2>/dev/null | awk '$1=="authorizedkeysfile"{$1=""; print}')
+  [[ -n ${files// /} ]] || files=".ssh/authorized_keys .ssh/authorized_keys2"
+  for f in $files; do
+    [[ $f == none ]] && continue
+    f=${f//%h/$home}; f=${f//%u/$u}; f=${f//%%/%}
+    [[ $f == /* ]] || f=$home/$f
+    [[ -s $f ]] || continue
+    n=$((n + $(ssh-keygen -l -f "$f" 2>/dev/null | grep -c . || true)))
+  done
+  echo "$n"
+}
+
+# Sets SSHK_WHY (reason to refuse), SSHK_METHOD, SSHK_KEYS; returns 1 when keys-only is unsafe.
+ssh_keys_precheck() {
+  local u=${SUDO_USER:-root}
+  SSHK_WHY=""; SSHK_METHOD=$(ssh_session_method); SSHK_KEYS=$(ssh_key_count "$u")
+  if (( SSHK_KEYS == 0 )); then
+    SSHK_WHY="у пользователя $u нет ключей в authorized_keys — добавьте ключ (ssh-copy-id) и войдите по нему"; return 1
+  fi
+  case "$SSHK_METHOD" in
+    password|keyboard-interactive)
+      SSHK_WHY="эта сессия вошла по паролю ($SSHK_METHOD) — сначала проверьте вход по ключу в новой сессии"; return 1 ;;
+  esac
+  return 0
+}
+
+ssh_reload() {
+  local u
+  for u in ssh.service sshd.service; do
+    if systemctl is-active --quiet "$u"; then systemctl try-reload-or-restart "$u" >/dev/null 2>&1; return; fi
+  done
+  return 0
+}
+
+ssh_keys_restore() { # ssh_keys_restore <had_dropin>
+  if [[ $1 -eq 1 ]]; then cp -p /var/backups/goji-node/sshd-keys-before.conf "$SSH_KEYS_DROPIN"; else rm -f "$SSH_KEYS_DROPIN"; fi
+  sshd -t 2>/dev/null && ssh_reload
+  return 0
+}
+
+harden_ssh_keys() {
+  local bk=/var/backups/goji-node had=0 tmp kv cur prl other
+  command -v sshd >/dev/null || return 0
+  if ! grep -qsE '^[[:space:]]*Include[[:space:]]+.*sshd_config\.d' /etc/ssh/sshd_config; then
+    warn "в sshd_config нет Include для sshd_config.d — вход только по ключу не включён"; return 0
+  fi
+  if ! ssh_keys_precheck; then
+    warn "вход только по ключу не включён: $SSHK_WHY"; KEYS_ON=0; save_conf; return 0
+  fi
+  [[ -n $SSHK_METHOD ]] || warn "не удалось определить, как вошла эта сессия: перед выходом проверьте вход по ключу во второй сессии"
+  mkdir -p "$bk"; chmod 700 "$bk"
+  if [[ -f $SSH_KEYS_DROPIN ]]; then cp -p "$SSH_KEYS_DROPIN" "$bk/sshd-keys-before.conf"; had=1; fi
+  prl=$(sshd -T 2>/dev/null | awk '$1=="permitrootlogin"{print $2}')
+  tmp=$(mktemp /etc/ssh/sshd_config.d/.goji-XXXXXX)
+  {
+    echo "# Managed by goji-node-setup (--ssh-keys-only): login by key only."
+    echo "PasswordAuthentication no"
+    echo "KbdInteractiveAuthentication no"
+    # root по паролю -> root только по ключу; «no» и «prohibit-password» не трогаем
+    if [[ $prl == yes ]] || grep -qs '^PermitRootLogin' "$SSH_KEYS_DROPIN"; then echo "PermitRootLogin prohibit-password"; fi
+  } > "$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$SSH_KEYS_DROPIN"
+  if ! sshd -t 2>/dev/null; then ssh_keys_restore "$had"; warn "sshd отклонил настройку — вход только по ключу не включён"; return 0; fi
+  for kv in "passwordauthentication no" "kbdinteractiveauthentication no"; do
+    cur=$(sshd -T 2>/dev/null | awk -v k="${kv% *}" '$1==k{print $2; exit}')
+    [[ $cur == "${kv#* }" ]] && continue
+    other=$(grep -ilE "^[[:space:]]*${kv% *}[[:space:]]" /etc/ssh/sshd_config.d/*.conf 2>/dev/null | grep -v goji-keys-only | head -1)
+    ssh_keys_restore "$had"
+    warn "вход только по ключу не включён: ${kv% *} = $cur задаёт другой файл (${other:-sshd_config}), он читается раньше"
+    return 0
+  done
+  if ! ssh_reload; then ssh_keys_restore "$had"; warn "sshd не перечитал конфигурацию — вход только по ключу откатен"; return 0; fi
+  ok "SSH: вход только по ключу (ключей у ${SUDO_USER:-root}: $SSHK_KEYS; пароль отключён$(grep -qs '^PermitRootLogin' "$SSH_KEYS_DROPIN" && echo ', root — только по ключу'))"
+}
+
+# --no-ssh-keys-only (или ответ «нет» при переустановке): снова разрешить вход по паролю.
+ssh_keys_off() {
+  [[ -f $SSH_KEYS_DROPIN ]] || return 0
+  rm -f "$SSH_KEYS_DROPIN"
+  if sshd -t 2>/dev/null; then ssh_reload; info "SSH: вход по паролю снова разрешён (файл 00-goji-keys-only.conf снят)"
+  else warn "файл 00-goji-keys-only.conf снят, но sshd -t сообщает об ошибке — sshd не перезагружен"; fi
+}
+
 # Traffic Control (blocklists of scanner networks) is opt-in.
 if [[ $HARDEN -eq 1 ]]; then
   if [[ -z "$GUARD_MODE" ]]; then
@@ -1140,6 +1254,22 @@ if [[ $HARDEN -eq 1 ]]; then
     fi
   fi
   GUARD_ON=$GUARD_MODE
+
+  # Вход по SSH только по ключу: предлагается, только если это не отрежет текущий способ входа.
+  if [[ -z "$KEYS_MODE" ]]; then
+    KEYS_MODE=0
+    if [[ -r /dev/tty ]] && command -v sshd >/dev/null; then
+      if ssh_keys_precheck; then
+        # при переустановке уже включённая защита по умолчанию остаётся
+        if [[ -f $SSH_KEYS_DROPIN ]]; then __kd=y; __kp="Y/n"; else __kd=n; __kp="y/N"; fi
+        read -r -p "Запретить вход по SSH по паролю — только ключи (у ${SUDO_USER:-root} ключей: $SSHK_KEYS)? [$__kp]: " __k </dev/tty || true
+        [[ "${__k:-$__kd}" =~ ^[yYдД] ]] && KEYS_MODE=1
+      else
+        info "Вход только по ключу не предлагаю: $SSHK_WHY"
+      fi
+    fi
+  fi
+  KEYS_ON=$KEYS_MODE
 fi
 
 # Installing updates of the current OS release (apt upgrade, not a release upgrade).
@@ -1169,6 +1299,7 @@ save_conf() {
     printf 'GOJI_ICMP_DROP=%q\n' "$ICMP_DROP"
     printf 'GOJI_GUARD=%q\n' "$GUARD_ON"
     printf 'GOJI_UPGRADE=%q\n' "$UPGRADE_ON"
+    printf 'GOJI_SSH_KEYS_ONLY=%q\n' "$KEYS_ON"
     printf 'GOJI_PANEL_PROFILE=%q\n' "$PANEL_PROFILE"
     printf 'GOJI_ADMIN_IPS=%q\n' "${ADMIN_IPS[*]:-}"
     printf 'GOJI_EXTRA_PORTS=%q\n' "${EXTRA_PORTS[*]:-}"
@@ -2225,6 +2356,7 @@ install_check_command() {
 if [[ $HARDEN -eq 1 ]]; then
   harden_system
   harden_ssh
+  if [[ $KEYS_ON -eq 1 ]]; then harden_ssh_keys; else ssh_keys_off; fi
   harden_ping
   if [[ $GUARD_ON -eq 1 ]]; then harden_guard; else info "Traffic Control не установлен (параметр --traffic-control)"; fi
 else
