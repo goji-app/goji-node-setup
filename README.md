@@ -79,7 +79,7 @@ flowchart LR
 | `--email` | — | e-mail для Let's Encrypt |
 | `--secret-key` | спросит | `SECRET_KEY` ноды |
 | `--node-port` | `2222` | порт API ноды для панели |
-| `--panel-ip` | — | IP панели; для `NODE_PORT` в `ufw` создаётся правило только для него |
+| `--panel-ip` | — | IP панели; для `NODE_PORT` в `ufw` создаётся правило только для него, а оставшееся от прежней установки правило «всем» (`ALLOW Anywhere`) снимается |
 | `--xray-port` | `10443` | внутренний порт Xray на `127.0.0.1` |
 | `--path` | `/api/v2/telemetry/` | путь XHTTP, начинается и заканчивается на `/` |
 | `--template` | меню / `random` | заглушка: `random`, `analytics`, `blog`, `docs`, `saas`, `freelancer`, `resume`, `creative`, `grayscale`, `new-age`, `agency`. Без флага на терминале показывается меню выбора, без терминала берётся случайная |

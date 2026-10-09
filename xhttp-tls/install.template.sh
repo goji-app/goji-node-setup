@@ -22,7 +22,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.3.0
+VERSION=1.3.1
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -316,10 +316,34 @@ gjc_system() {
   if [[ -f /var/run/reboot-required ]]; then gj_row warn "Перезагрузка" "нужна для применения обновлений ОС"; else gj_row ok "Перезагрузка" "не требуется"; fi
 }
 
+# Порт API ноды открыт всем (ALLOW Anywhere), а не только панели.
+gj_nodeport_public() { # gj_nodeport_public <порт>
+  ufw status 2>/dev/null | grep -qE "^$1(/tcp)?( \(v6\))?[[:space:]]+ALLOW( IN)?[[:space:]]+Anywhere"
+}
+gj_nodeport_close() { # gj_nodeport_close <порт>: снимает правила «всем», правило для IP панели остаётся
+  ufw --force delete allow "$1/tcp" >/dev/null 2>&1 || true
+  ufw --force delete allow "$1" >/dev/null 2>&1 || true
+  ! gj_nodeport_public "$1"
+}
+
+gjc_nodeport() {
+  local np=${GOJI_NODE_PORT:-}
+  [[ -n $np ]] && ufw status 2>/dev/null | grep -q "Status: active" || return 0
+  if gj_nodeport_public "$np"; then
+    gj_row fail "Порт API ноды :$np" "открыт всем (ALLOW Anywhere): ноду Remnawave видно сканерам$([[ -n ${GOJI_PANEL_IP:-} ]] && echo " — исправит goji-node fix" || echo " — задайте IP панели: bash install.sh --resume --panel-ip <IP>")"
+    GJ_FAIL=1
+  elif [[ -n ${GOJI_PANEL_IP:-} ]] && ufw status 2>/dev/null | grep -qE "^$np(/tcp)?[[:space:]]+ALLOW( IN)?[[:space:]]+${GOJI_PANEL_IP//./\\.}"; then
+    gj_row ok "Порт API ноды :$np" "открыт только для панели $GOJI_PANEL_IP"
+  else
+    gj_row warn "Порт API ноды :$np" "нет правила для IP панели — панель может не достучаться до ноды"
+  fi
+}
+
 gjc_security() {
   gj_title "Защита: UFW, Fail2ban, SSH, ping, Traffic Control"
   if [[ ${GOJI_HARDEN:-1} -ne 1 ]]; then gj_row warn "Усиление защиты" "пропущено (--skip-hardening)"; return 0; fi
   if ufw status 2>/dev/null | grep -q "Status: active"; then gj_row ok "UFW" "включён, входящие закрыты по умолчанию"; else gj_row warn "UFW" "не включён"; fi
+  gjc_nodeport
   if fail2ban-client ping >/dev/null 2>&1; then gj_row ok "Fail2ban" "работает (sshd, recidive)"; else gj_row warn "Fail2ban" "не отвечает"; fi
   local sshv
   sshv=$(sshd -T 2>/dev/null | awk '$1=="maxauthtries"{print $2}')
@@ -470,6 +494,14 @@ goji_fix() {
     fi
     if command -v ufw >/dev/null && ! ufw status 2>/dev/null | grep -q "Status: active"; then
       gjf_resume "UFW выключен (правила и доступ по SSH безопасно задаёт установщик)"
+    elif [[ -n ${GOJI_NODE_PORT:-} ]] && gj_nodeport_public "$GOJI_NODE_PORT"; then
+      if [[ -n ${GOJI_PANEL_IP:-} ]]; then
+        # сначала правило для панели (идемпотентно), затем снимаем «всем» — связь с панелью не теряется
+        ufw allow from "$GOJI_PANEL_IP" to any port "$GOJI_NODE_PORT" proto tcp >/dev/null 2>&1 || true
+        gjf_do "Порт API ноды :$GOJI_NODE_PORT открыт всем → только панель $GOJI_PANEL_IP" gj_nodeport_close "$GOJI_NODE_PORT" || true
+      else
+        gjf_manual "Порт API ноды :$GOJI_NODE_PORT открыт всем" "IP панели не сохранён: bash install.sh --resume --panel-ip <IP панели>"
+      fi
     fi
     if [[ -f /etc/systemd/system/goji-two-way-ping.service ]] && ! nft list table inet goji_privacy >/dev/null 2>&1; then
       gjf_do "Защита от ping не загружена" systemctl restart goji-two-way-ping.service || true
@@ -1522,6 +1554,11 @@ EOF
     if [[ -n "$np" ]]; then
       if [[ -n "$PANEL_IP" ]]; then
         ufw allow from "$PANEL_IP" to any port "$np" proto tcp >/dev/null
+        # правило «всем» от прежней установки без --panel-ip держит API ноды открытым для интернета
+        if gj_nodeport_public "$np"; then
+          gj_nodeport_close "$np"
+          ok "ufw: порт ноды $np больше не открыт всем — только для панели $PANEL_IP"
+        fi
       else
         warn "нет --panel-ip: $np/tcp открыт всем, чтобы панель достучалась до ноды; задайте --panel-ip, чтобы ограничить"
         ufw allow "$np/tcp" >/dev/null
@@ -2137,7 +2174,7 @@ install_check_command() {
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION
     declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
-      goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
+      gj_nodeport_public gj_nodeport_close gjc_nodeport goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
