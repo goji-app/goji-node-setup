@@ -147,7 +147,7 @@ flowchart LR
 | `grayscale` | тёмный минималистичный лендинг | [StartBootstrap/startbootstrap-grayscale](https://github.com/StartBootstrap/startbootstrap-grayscale), MIT |
 | `new-age` | лендинг мобильного приложения | [StartBootstrap/startbootstrap-new-age](https://github.com/StartBootstrap/startbootstrap-new-age), MIT |
 | `agency` | корпоративный сайт агентства: услуги, команда, портфолио | [StartBootstrap/startbootstrap-agency](https://github.com/StartBootstrap/startbootstrap-agency), MIT |
-| `livecams` | каталог онлайн-трансляций городов и зоопарков (ссылки на сайты операторов камер, один плеер подгружается по клику) | написан для этого репозитория |
+| `livecams` | сайт онлайн-трансляций (МКС, NASA, зоопарки, океан, живая природа, города): плеер открывается на самой странице, YouTube-встройки грузятся по клику | написан для этого репозитория |
 
 Заглушку можно выбрать в меню при установке или флагом `--template`; без терминала выбирается случайная. При повторном запуске сохраняется выбранный шаблон, сменить его позже: `goji-node decoy` (меню) или `goji-node decoy <имя>`. Шаблоны Start Bootstrap взяты из `dist/` репозиториев, изображения пересжаты, рекламные тексты и ссылки на сайт-источник заменены, скрипт стороннего сервиса форм удалён. Часть шаблонов подгружает Bootstrap-скрипт, шрифты и иконки с публичных CDN (jsDelivr, Google Fonts, Font Awesome), как и оригиналы. Лицензии сторонних шаблонов лежат рядом с ними и отдаются как `LICENSE.txt`.
 

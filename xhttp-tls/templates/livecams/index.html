@@ -3,176 +3,231 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Open Window — live cams of cities and zoos</title>
-  <meta name="description" content="A directory of public live webcams: city squares, harbours, zoos and wildlife. Streams open on the sources' own sites.">
+  <title>Open Window — live cams: space, zoos, oceans and cities</title>
+  <meta name="description" content="Watch live streams in one place: the International Space Station, zoos and aquariums, oceans, wildlife and cities around the world.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>
-    :root { --bg:#f3f7fa; --fg:#14232f; --muted:#587083; --line:#d9e3ea; --card:#fff; --accent:#1668a8; --live:#e5484d; }
-    @media (prefers-color-scheme: dark) {
-      :root { --bg:#0c1620; --fg:#e6eef4; --muted:#8aa2b4; --line:#1f3345; --card:#112232; --accent:#7fd1ff; }
-    }
-    * { box-sizing: border-box; }
-    body { margin:0; background:var(--bg); color:var(--fg);
-      font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+    :root { --bg:#0b1119; --bg2:#111a25; --card:#141f2c; --line:#223245; --fg:#e8eff6; --muted:#8ea3b6; --accent:#5cc8ff; --live:#ff4d4f; }
+    :root[data-theme="light"] { --bg:#f3f6f9; --bg2:#fff; --card:#fff; --line:#d9e2ea; --fg:#14232f; --muted:#587083; --accent:#0f6aa8; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
     a { color:var(--accent); text-decoration:none; }
-    .wrap { max-width:1080px; margin:0 auto; padding:0 20px; }
-    header { border-bottom:1px solid var(--line); }
-    header .wrap { display:flex; align-items:center; justify-content:space-between; height:60px; }
-    .logo { display:flex; align-items:center; gap:10px; font-weight:700; color:var(--fg); }
+    button { font:inherit; color:inherit; }
+    .wrap { max-width:1240px; margin:0 auto; padding:0 20px; }
+    header { position:sticky; top:0; z-index:5; background:color-mix(in srgb,var(--bg) 92%,transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--line); }
+    header .wrap { display:flex; align-items:center; gap:18px; height:62px; }
+    .logo { display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px; color:var(--fg); white-space:nowrap; }
     .logo i { width:22px; height:22px; border-radius:50%; border:3px solid var(--accent); position:relative; }
-    .logo i::after { content:""; position:absolute; inset:4px; border-radius:50%; background:var(--live); }
-    nav a { margin-left:20px; color:var(--muted); font-size:15px; }
-    nav a:hover { color:var(--fg); }
-    .hero { padding:52px 0 28px; }
-    h1 { font-size:clamp(30px,5vw,46px); line-height:1.1; margin:0 0 12px; letter-spacing:-.02em; }
-    .hero p { color:var(--muted); max-width:620px; margin:0; font-size:18px; }
-    .tabs { display:flex; gap:8px; margin:26px 0 22px; flex-wrap:wrap; }
-    .tabs button { font:inherit; font-size:14px; padding:7px 16px; border-radius:999px; cursor:pointer;
-      border:1px solid var(--line); background:var(--card); color:var(--fg); }
-    .tabs button[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:var(--bg); }
-    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:20px; padding-bottom:48px; }
-    .cam { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
-    .cam[hidden] { display:none; }
-    .shot { position:relative; aspect-ratio:16/9; display:block; border:0; width:100%; padding:0; cursor:pointer; color:#fff; text-align:left; }
-    .shot svg { position:absolute; inset:0; width:100%; height:100%; }
-    .shot .tag { position:absolute; top:10px; left:10px; background:var(--live); font-size:11px; font-weight:700; letter-spacing:.08em;
-      padding:2px 8px; border-radius:4px; }
-    .shot .play { position:absolute; right:12px; bottom:12px; width:44px; height:44px; border-radius:50%;
-      background:rgba(0,0,0,.45); display:grid; place-items:center; }
-    .shot .play::after { content:""; border-left:14px solid #fff; border-top:8px solid transparent; border-bottom:8px solid transparent; margin-left:3px; }
-    .cam iframe { width:100%; aspect-ratio:16/9; border:0; display:block; }
-    .body { padding:14px 16px 16px; }
-    .body h3 { margin:0; font-size:17px; }
-    .body p { margin:2px 0 10px; color:var(--muted); font-size:14px; }
-    .body a { font-size:14px; }
-    .note { border-top:1px solid var(--line); padding:26px 0 40px; color:var(--muted); font-size:14px; }
-    footer { border-top:1px solid var(--line); padding:22px 0; color:var(--muted); font-size:14px; }
+    .logo i::after { content:""; position:absolute; inset:4px; border-radius:50%; background:var(--live); animation:pulse 2s infinite; }
+    @keyframes pulse { 50% { opacity:.35; } }
+    .search { flex:1; max-width:420px; margin-left:auto; }
+    .search input { width:100%; padding:8px 14px; border-radius:999px; border:1px solid var(--line); background:var(--bg2); color:var(--fg); font:inherit; font-size:14px; }
+    .search input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+    .theme { border:1px solid var(--line); background:var(--bg2); border-radius:999px; padding:6px 12px; cursor:pointer; font-size:13px; }
+    .stage { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:22px; padding:24px 0 8px; }
+    @media (max-width:960px) { .stage { grid-template-columns:1fr; } }
+    .player { background:#000; border-radius:14px; overflow:hidden; position:relative; aspect-ratio:16/9; border:1px solid var(--line); }
+    .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+    .poster { position:absolute; inset:0; display:block; width:100%; height:100%; border:0; padding:0; cursor:pointer; background:none; }
+    .poster svg { width:100%; height:100%; display:block; }
+    .poster .big { position:absolute; left:50%; top:50%; width:84px; height:84px; margin:-42px 0 0 -42px; border-radius:50%; background:rgba(0,0,0,.55); border:2px solid rgba(255,255,255,.8); display:grid; place-items:center; transition:transform .15s; }
+    .poster:hover .big { transform:scale(1.08); }
+    .poster .big::after { content:""; margin-left:6px; border-left:26px solid #fff; border-top:16px solid transparent; border-bottom:16px solid transparent; }
+    .meta { padding:16px 2px 4px; }
+    .meta .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .meta h1 { margin:0; font-size:24px; line-height:1.25; }
+    .badge { background:var(--live); color:#fff; font-size:11px; font-weight:700; letter-spacing:.08em; padding:2px 8px; border-radius:4px; }
+    .cat { color:var(--muted); font-size:14px; }
+    .meta p { color:var(--muted); margin:8px 0 12px; max-width:760px; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; }
+    .btn { border:1px solid var(--line); background:var(--bg2); border-radius:8px; padding:7px 14px; cursor:pointer; font-size:14px; }
+    .btn:hover { border-color:var(--accent); }
+    aside h2 { font-size:15px; margin:0 0 10px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.06em; }
+    .next { display:flex; flex-direction:column; gap:10px; max-height:calc(((100vw - 40px) * 9 / 16)); }
+    @media (min-width:961px) { .next { max-height:600px; overflow:auto; padding-right:4px; } }
+    .item { display:flex; gap:12px; border:1px solid transparent; background:none; text-align:left; border-radius:10px; padding:6px; cursor:pointer; }
+    .item:hover, .item[aria-current="true"] { background:var(--card); border-color:var(--line); }
+    .item .th { flex:0 0 120px; aspect-ratio:16/9; border-radius:6px; overflow:hidden; position:relative; }
+    .item .th svg { width:100%; height:100%; display:block; }
+    .item .th .badge { position:absolute; left:4px; top:4px; font-size:9px; padding:1px 5px; }
+    .item b { display:block; font-size:14px; line-height:1.3; }
+    .item span { color:var(--muted); font-size:12px; }
+    .chips { display:flex; gap:8px; flex-wrap:wrap; margin:26px 0 18px; }
+    .chips button { border:1px solid var(--line); background:var(--bg2); border-radius:999px; padding:6px 15px; font-size:14px; cursor:pointer; }
+    .chips button[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:#04141f; font-weight:600; }
+    .chips small { opacity:.7; margin-left:4px; }
+    h2.sec { font-size:20px; margin:0 0 14px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:18px; padding-bottom:40px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; cursor:pointer; text-align:left; padding:0; display:block; width:100%; }
+    .card:hover { border-color:var(--accent); }
+    .card .th { aspect-ratio:16/9; position:relative; }
+    .card .th svg { width:100%; height:100%; display:block; }
+    .card .th .badge { position:absolute; left:8px; top:8px; }
+    .card .bd { padding:11px 13px 13px; }
+    .card b { display:block; font-size:15px; line-height:1.3; }
+    .card span { color:var(--muted); font-size:13px; }
+    .empty { color:var(--muted); padding:30px 0 50px; }
+    footer { border-top:1px solid var(--line); padding:24px 0 34px; color:var(--muted); font-size:14px; }
+    footer .wrap { display:flex; gap:20px; flex-wrap:wrap; justify-content:space-between; }
+    footer p { margin:0; max-width:720px; }
+    [hidden] { display:none !important; }
   </style>
 </head>
 <body>
   <header>
     <div class="wrap">
       <a class="logo" href="/"><i></i>Open Window</a>
-      <nav><a href="#cities">Cities</a><a href="#zoos">Zoos &amp; wildlife</a><a href="#about">About</a></nav>
+      <label class="search"><input id="q" type="search" placeholder="Search streams…" aria-label="Search streams" autocomplete="off"></label>
+      <button class="theme" id="theme" type="button" aria-label="Switch theme">Theme</button>
     </div>
   </header>
 
   <main class="wrap">
-    <section class="hero">
-      <h1>The world, live.<br>Squares, harbours, pandas.</h1>
-      <p>A hand-picked directory of public webcams from cities and zoos around the globe. Pick a camera and watch it on the source’s own site.</p>
+    <section class="stage">
+      <div>
+        <div class="player" id="player"></div>
+        <div class="meta">
+          <div class="row"><span class="badge">LIVE</span><span class="cat" id="m-cat"></span></div>
+          <h1 id="m-title"></h1>
+          <p id="m-desc"></p>
+          <div class="actions">
+            <button class="btn" id="fs" type="button">Fullscreen</button>
+            <button class="btn" id="share" type="button">Copy link</button>
+          </div>
+        </div>
+      </div>
+      <aside>
+        <h2>Up next</h2>
+        <div class="next" id="next"></div>
+      </aside>
     </section>
 
-    <div class="tabs" role="group" aria-label="Filter">
-      <button type="button" data-f="all" aria-pressed="true">All</button>
-      <button type="button" data-f="city" aria-pressed="false">Cities</button>
-      <button type="button" data-f="zoo" aria-pressed="false">Zoos &amp; wildlife</button>
-    </div>
-
-    <section class="grid" id="cities">
-      <article class="cam" data-k="city">
-        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/italia/veneto/venezia/piazza-san-marco.html" target="_blank" rel="noopener noreferrer" aria-label="Venice, Piazza San Marco">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6b26b"/><stop offset="1" stop-color="#6d4c7d"/></linearGradient></defs><rect width="160" height="90" fill="url(#g1)"/><path d="M0 70h160v20H0z" fill="#2c3e57"/><path d="M20 70V46l6-8 6 8v24M62 70V30l5-10 5 10v40M110 70V50h8v-8l8-6 8 6v8h8v20" fill="#35244a"/></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </a>
-        <div class="body"><h3>Venice — Piazza San Marco</h3><p>Italy · city square</p><a href="https://www.skylinewebcams.com/en/webcam/italia/veneto/venezia/piazza-san-marco.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
-      </article>
-
-      <article class="cam" data-k="city">
-        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/italia/lazio/roma/roma-colosseo.html" target="_blank" rel="noopener noreferrer" aria-label="Rome, Colosseum">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd27a"/><stop offset="1" stop-color="#e5774f"/></linearGradient></defs><rect width="160" height="90" fill="url(#g2)"/><path d="M0 72h160v18H0z" fill="#4a3a35"/><path d="M30 72V44q50-14 100 0v28z" fill="#6b4a3c"/><g fill="#4a3a35"><rect x="42" y="50" width="6" height="14" rx="3"/><rect x="58" y="48" width="6" height="16" rx="3"/><rect x="74" y="47" width="6" height="17" rx="3"/><rect x="90" y="48" width="6" height="16" rx="3"/><rect x="106" y="50" width="6" height="14" rx="3"/></g></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </a>
-        <div class="body"><h3>Rome — Colosseum</h3><p>Italy · landmark</p><a href="https://www.skylinewebcams.com/en/webcam/italia/lazio/roma/roma-colosseo.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
-      </article>
-
-      <article class="cam" data-k="city">
-        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/france/ile-de-france/paris/tour-eiffel.html" target="_blank" rel="noopener noreferrer" aria-label="Paris, Eiffel Tower">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#274b78"/><stop offset="1" stop-color="#e9a1b5"/></linearGradient></defs><rect width="160" height="90" fill="url(#g3)"/><path d="M0 76h160v14H0z" fill="#1c2b3f"/><path d="M80 14l-3 22-9 40h8l4-18h0l4 18h8l-9-40z" fill="#1c2b3f"/><path d="M70 50h20" stroke="#1c2b3f" stroke-width="3"/></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </a>
-        <div class="body"><h3>Paris — Eiffel Tower</h3><p>France · landmark</p><a href="https://www.skylinewebcams.com/en/webcam/france/ile-de-france/paris/tour-eiffel.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
-      </article>
-
-      <article class="cam" data-k="city">
-        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/united-states/new-york/new-york/times-square.html" target="_blank" rel="noopener noreferrer" aria-label="New York, Times Square">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1b33"/><stop offset="1" stop-color="#5b2a6e"/></linearGradient></defs><rect width="160" height="90" fill="url(#g4)"/><g fill="#101a2c"><rect x="8" y="30" width="30" height="60"/><rect x="42" y="18" width="26" height="72"/><rect x="72" y="36" width="30" height="54"/><rect x="106" y="24" width="24" height="66"/><rect x="132" y="40" width="24" height="50"/></g><g fill="#ffd76a"><rect x="14" y="38" width="4" height="4"/><rect x="24" y="50" width="4" height="4"/><rect x="48" y="30" width="4" height="4"/><rect x="58" y="46" width="4" height="4"/><rect x="80" y="48" width="4" height="4"/><rect x="112" y="36" width="4" height="4"/><rect x="140" y="52" width="4" height="4"/></g></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </a>
-        <div class="body"><h3>New York — Times Square</h3><p>USA · city centre</p><a href="https://www.skylinewebcams.com/en/webcam/united-states/new-york/new-york/times-square.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
-      </article>
-
-      <article class="cam" data-k="city">
-        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/czech-republic/prague/prague/prague.html" target="_blank" rel="noopener noreferrer" aria-label="Prague">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9ec9e8"/><stop offset="1" stop-color="#f1d9b5"/></linearGradient></defs><rect width="160" height="90" fill="url(#g5)"/><path d="M0 74h160v16H0z" fill="#5d7a8c"/><g fill="#8a4f3c"><path d="M14 74V54l8-12 8 12v20z"/><path d="M52 74V44l6-16 6 16v30z"/><path d="M92 74V56l10-10 10 10v18z"/><path d="M128 74V50l7-14 7 14v24z"/></g></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </a>
-        <div class="body"><h3>Prague — old town</h3><p>Czechia · skyline</p><a href="https://www.skylinewebcams.com/en/webcam/czech-republic/prague/prague/prague.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
-      </article>
-
-      <article class="cam" data-k="city">
-        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/australia/new-south-wales/sydney/sydney.html" target="_blank" rel="noopener noreferrer" aria-label="Sydney Harbour">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g6" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#58b6e8"/><stop offset="1" stop-color="#d9f1fb"/></linearGradient></defs><rect width="160" height="90" fill="url(#g6)"/><path d="M0 62h160v28H0z" fill="#1f6f9c"/><g fill="#f4f7f9"><path d="M40 62q8-22 24-22 4 10 0 22z"/><path d="M62 62q8-18 22-18 3 8 0 18z"/><path d="M84 62q7-14 18-14 2 7 0 14z"/></g></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </a>
-        <div class="body"><h3>Sydney — harbour</h3><p>Australia · waterfront</p><a href="https://www.skylinewebcams.com/en/webcam/australia/new-south-wales/sydney/sydney.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
-      </article>
-
-      <article class="cam" data-k="zoo" id="zoos">
-        <a class="shot" href="https://zoo.sandiegozoo.org/cams/panda-cam" target="_blank" rel="noopener noreferrer" aria-label="Giant panda cam, San Diego Zoo">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g7" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b9e3a8"/><stop offset="1" stop-color="#4f9a5a"/></linearGradient></defs><rect width="160" height="90" fill="url(#g7)"/><g stroke="#2f6a3a" stroke-width="3"><path d="M120 0v90M136 0v90"/></g><ellipse cx="68" cy="58" rx="26" ry="20" fill="#fff"/><circle cx="68" cy="34" r="15" fill="#fff"/><circle cx="57" cy="23" r="5" fill="#222"/><circle cx="79" cy="23" r="5" fill="#222"/><ellipse cx="62" cy="34" rx="3.5" ry="5" fill="#222"/><ellipse cx="74" cy="34" rx="3.5" ry="5" fill="#222"/><path d="M42 52q-6 14 4 22M94 52q6 14-4 22" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </a>
-        <div class="body"><h3>Giant panda cam</h3><p>San Diego Zoo · USA</p><a href="https://zoo.sandiegozoo.org/cams/panda-cam" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
-      </article>
-
-      <article class="cam" data-k="zoo">
-        <a class="shot" href="https://zoo.sandiegozoo.org/cams" target="_blank" rel="noopener noreferrer" aria-label="All San Diego Zoo cams">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g8" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe6a8"/><stop offset="1" stop-color="#d79a4a"/></linearGradient></defs><rect width="160" height="90" fill="url(#g8)"/><g fill="#8a5a2b"><rect x="30" y="20" width="5" height="60"/><rect x="62" y="30" width="5" height="50"/><path d="M92 80V40h8V20h6v20h8v40z"/></g><circle cx="130" cy="22" r="9" fill="#fff4cf"/></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </a>
-        <div class="body"><h3>Koalas, penguins, polar bears and more</h3><p>San Diego Zoo · camera list</p><a href="https://zoo.sandiegozoo.org/cams" target="_blank" rel="noopener noreferrer">Open the camera list →</a></div>
-      </article>
-
-      <article class="cam" data-k="zoo" id="embed-card">
-        <button class="shot" type="button" id="play-africa" aria-label="Play African wildlife stream">
-          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g9" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb866"/><stop offset="1" stop-color="#c4562b"/></linearGradient></defs><rect width="160" height="90" fill="url(#g9)"/><path d="M0 70h160v20H0z" fill="#5a3320"/><path d="M110 70V34q0-6 6-6 6 0 6 6 14 0 14 10-14 0-14 10v16z" fill="#2c1a10"/><circle cx="36" cy="26" r="12" fill="#ffe3a3"/></svg>
-          <span class="tag">LIVE</span><span class="play"></span>
-        </button>
-        <div class="body"><h3>African wildlife</h3><p>Explore.org · watering holes &amp; reserves</p><a href="https://explore.org/livecams" target="_blank" rel="noopener noreferrer">All Explore.org cams →</a></div>
-      </article>
-    </section>
-
-    <section class="note" id="about">
-      <strong>About.</strong> Open Window does not host or rebroadcast any video. Every camera is operated by a third party; links open on the operator’s own page, and availability depends on the source.
-    </section>
+    <div class="chips" id="chips" role="group" aria-label="Categories"></div>
+    <h2 class="sec" id="sec">All streams</h2>
+    <section class="grid" id="grid"></section>
+    <div class="empty" id="empty" hidden>No streams match your search.</div>
   </main>
 
-  <footer><div class="wrap">© <span id="y">2026</span> Open Window · <a href="/robots.txt">robots.txt</a></div></footer>
+  <footer>
+    <div class="wrap">
+      <p>Open Window brings public live broadcasts together in one place. Streams are provided by their respective operators; availability and schedules depend on the source.</p>
+      <span>© <span id="y">2026</span> Open Window</span>
+    </div>
+  </footer>
 
   <script>
-    (function () {
-      var y = document.getElementById('y'); if (y) y.textContent = new Date().getFullYear();
-      var tabs = document.querySelectorAll('.tabs button'), cams = document.querySelectorAll('.cam');
-      tabs.forEach(function (b) {
-        b.addEventListener('click', function () {
-          tabs.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
-          var f = b.getAttribute('data-f');
-          cams.forEach(function (c) { c.hidden = !(f === 'all' || c.getAttribute('data-k') === f); });
-        });
-      });
-      // The embedded player is loaded only on click: nothing is requested from third parties before that.
-      var p = document.getElementById('play-africa');
-      if (p) p.addEventListener('click', function () {
+  (function () {
+    // Stream sources: c = YouTube channel (its current live broadcast), v = video id, p = playlist id.
+    var S = [
+      { id:'iss',      cat:'space',   t:'International Space Station — live views', d:'Live video from cameras on the International Space Station, as published by NASA. Availability depends on the broadcast.', p:'PL2aBZuCeDwlQMf6xMgQAUAY_nbHAgW5jz' },
+      { id:'nasa',     cat:'space',   t:'NASA — live broadcast', d:'NASA’s current live broadcast: launches, spacewalks, mission coverage and briefings when they are on air.', c:'UCLA_DiR1FfKNvjuUpBHmylQ' },
+      { id:'sdzoo',    cat:'zoo',     t:'San Diego Zoo — live animal cam', d:'Live view of animals at the San Diego Zoo Wildlife Alliance.', c:'UCC5NfQ6Mf0dq_eEwv4P_hWA' },
+      { id:'monterey', cat:'ocean',    t:'Monterey Bay Aquarium — live cam', d:'Live view from the Monterey Bay Aquarium: sea life from the California coast.', c:'UCnM5iMGiKsZg-iOlIO2ZkdQ' },
+      { id:'africa',   cat:'nature',  t:'African wildlife — live', d:'Live view of African wildlife from Explore.org partner cameras.', c:'UCiGOIXjFqy5_mUNxQNOMfHw' },
+      { id:'oceans',   cat:'ocean',   t:'Oceans — live underwater cam', d:'Live underwater and coastal cameras from Explore.org.', c:'UCSyg9cb3Iq-NtlbxqNB9wGw' },
+      { id:'nature',   cat:'nature',  t:'Live nature cams', d:'A rotating selection of live nature and wildlife cameras from Explore.org.', c:'UC-2KSeUU5SMCX6XLRD-AEvw' },
+      { id:'bears',    cat:'nature',  t:'Bears — live', d:'Live bear cams from Explore.org: rivers, forests and coastline.', c:'UC2Sk0aXLq3ADkH_USGPKT_Q' },
+      { id:'eagles',   cat:'nature',  t:'Eagles and birds — live', d:'Live nest and bird cameras from Explore.org.', c:'UC8NnosPOvXnm0O1u5YnLQiw' },
+      { id:'earthcam', cat:'city',    t:'EarthCam — cities around the world', d:'Live city and landmark cameras from the EarthCam network.', c:'UC6qrG3W8SMK0jior2olka3g' },
+      { id:'skyline',  cat:'city',    t:'SkylineWebcams — live cities', d:'Live city views, squares and coastlines from the SkylineWebcams network.', c:'UC2WMV4vCYurHdHPd9pCqYSg' }
+    ];
+    var CATS = [['all','All'],['space','Space'],['zoo','Zoos'],['nature','Wildlife'],['ocean','Oceans & aquariums'],['city','Cities']];
+    var LABEL = { space:'Space', zoo:'Zoos', nature:'Wildlife', ocean:'Oceans & aquariums', city:'Cities' };
+    var PAL = { space:['#060b24','#3b2a7a','#8fd0ff'], zoo:['#1d4b2b','#4f9a5a','#e5f5c8'], nature:['#3b2a16','#c4742b','#ffd9a0'], ocean:['#04203a','#0e6aa0','#7fe0ff'], city:['#14143a','#7b3d86','#ffb36b'] };
+    var $ = function (id) { return document.getElementById(id); };
+
+    function art(cat, k) {
+      var p = PAL[cat], g = 'g' + cat + k, ic = '';
+      if (cat === 'space') ic = '<circle cx="118" cy="62" r="34" fill="#2e7fd6"/><path d="M90 54q20 8 34 0t26 8v10q-22-8-34 2t-26-4z" fill="#58b36a" opacity=".8"/><g fill="#fff"><circle cx="20" cy="14" r="1.3"/><circle cx="48" cy="30" r="1"/><circle cx="76" cy="12" r="1.2"/><circle cx="30" cy="58" r="1"/></g><path d="M20 80h46M32 74v12M54 74v12" stroke="#cfd8e3" stroke-width="2.2"/><rect x="40" y="76" width="12" height="8" fill="#e6edf5"/>';
+      if (cat === 'zoo') ic = '<g stroke="#2f6a3a" stroke-width="3"><path d="M120 0v90M138 0v90"/></g><ellipse cx="72" cy="60" rx="26" ry="20" fill="#fff"/><circle cx="72" cy="36" r="15" fill="#fff"/><circle cx="61" cy="25" r="5" fill="#222"/><circle cx="83" cy="25" r="5" fill="#222"/><ellipse cx="66" cy="36" rx="3.5" ry="5" fill="#222"/><ellipse cx="78" cy="36" rx="3.5" ry="5" fill="#222"/>';
+      if (cat === 'nature') ic = '<path d="M0 72h160v18H0z" fill="#3a2414"/><path d="M104 72V38q0-7 7-7t7 7q16 0 16 11-16 0-16 12v11z" fill="#1d1109"/><circle cx="38" cy="26" r="13" fill="#ffe3a3"/>';
+      if (cat === 'ocean') ic = '<path d="M0 54q20-10 40 0t40 0 40 0 40 0v36H0z" fill="#0a4f7c"/><path d="M0 68q20-10 40 0t40 0 40 0 40 0v22H0z" fill="#06385c"/><path d="M60 44q14-12 30 0-14 10-30 0z" fill="#ffd36b"/><circle cx="86" cy="43" r="1.6" fill="#222"/>';
+      if (cat === 'city') ic = '<g fill="#12122c"><rect x="8" y="42" width="26" height="48"/><rect x="38" y="26" width="24" height="64"/><rect x="66" y="48" width="28" height="42"/><rect x="98" y="32" width="22" height="58"/><rect x="124" y="50" width="30" height="40"/></g><g fill="#ffd76a"><rect x="14" y="50" width="4" height="4"/><rect x="44" y="36" width="4" height="4"/><rect x="52" y="52" width="4" height="4"/><rect x="74" y="58" width="4" height="4"/><rect x="104" y="42" width="4" height="4"/><rect x="132" y="60" width="4" height="4"/></g>';
+      return '<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><linearGradient id="' + g + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + p[0] + '"/><stop offset=".6" stop-color="' + p[1] + '"/><stop offset="1" stop-color="' + p[2] + '"/></linearGradient></defs><rect width="160" height="90" fill="url(#' + g + ')"/>' + ic + '</svg>';
+    }
+    function src(s) {
+      var h = 'https://www.youtube-nocookie.com/embed/';
+      if (s.c) return h + 'live_stream?channel=' + s.c + '&autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1';
+      if (s.v) return h + s.v + '?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1';
+      return h + 'videoseries?list=' + s.p + '&autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1';
+    }
+    function find(id) { for (var i = 0; i < S.length; i++) if (S[i].id === id) return S[i]; return S[0]; }
+
+    var cur = null, filter = 'all', query = '';
+    function show(id, play, push) {
+      var s = find(id); cur = s;
+      $('m-title').textContent = s.t; $('m-desc').textContent = s.d; $('m-cat').textContent = LABEL[s.cat];
+      document.title = s.t + ' — Open Window';
+      var box = $('player'); box.innerHTML = '';
+      if (play) {
         var f = document.createElement('iframe');
-        f.src = 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCiGOIXjFqy5_mUNxQNOMfHw&autoplay=1&mute=1';
-        f.title = 'African wildlife live stream';
+        f.src = src(s); f.title = s.t;
         f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-        f.setAttribute('allowfullscreen', '');
-        f.referrerPolicy = 'strict-origin-when-cross-origin';
-        p.replaceWith(f);
+        f.setAttribute('allowfullscreen', ''); f.referrerPolicy = 'strict-origin-when-cross-origin';
+        box.appendChild(f);
+      } else {
+        var b = document.createElement('button'); b.className = 'poster'; b.type = 'button'; b.setAttribute('aria-label', 'Play ' + s.t);
+        b.innerHTML = art(s.cat, 'p') + '<span class="big"></span>';
+        b.addEventListener('click', function () { show(s.id, true, false); });
+        box.appendChild(b);
+      }
+      if (push) { try { history.replaceState(null, '', '#' + s.id); } catch (e) {} }
+      renderNext();
+    }
+    function item(s, cls) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = cls;
+      b.innerHTML = (cls === 'card'
+        ? '<div class="th">' + art(s.cat, 'c' + s.id) + '<span class="badge">LIVE</span></div><div class="bd"><b></b><span></span></div>'
+        : '<div class="th">' + art(s.cat, 'n' + s.id) + '<span class="badge">LIVE</span></div><div><b></b><span></span></div>');
+      b.querySelector('b').textContent = s.t; b.querySelector('span:not(.badge)').textContent = LABEL[s.cat];
+      b.addEventListener('click', function () { show(s.id, true, true); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+      if (cls === 'item' && cur && cur.id === s.id) b.setAttribute('aria-current', 'true');
+      return b;
+    }
+    function renderNext() {
+      var n = $('next'); n.innerHTML = '';
+      S.forEach(function (s) { if (!cur || s.id !== cur.id) n.appendChild(item(s, 'item')); });
+    }
+    function renderGrid() {
+      var g = $('grid'); g.innerHTML = ''; var q = query.toLowerCase(), c = 0;
+      S.forEach(function (s) {
+        if (filter !== 'all' && s.cat !== filter) return;
+        if (q && (s.t + ' ' + s.d + ' ' + LABEL[s.cat]).toLowerCase().indexOf(q) < 0) return;
+        g.appendChild(item(s, 'card')); c++;
       });
-    })();
+      $('empty').hidden = c > 0;
+      $('sec').textContent = filter === 'all' ? 'All streams' : LABEL[filter];
+    }
+    function renderChips() {
+      var w = $('chips'); w.innerHTML = '';
+      CATS.forEach(function (c) {
+        var n = c[0] === 'all' ? S.length : S.filter(function (s) { return s.cat === c[0]; }).length;
+        var b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-pressed', filter === c[0] ? 'true' : 'false');
+        b.innerHTML = c[1] + '<small>' + n + '</small>';
+        b.addEventListener('click', function () { filter = c[0]; renderChips(); renderGrid(); });
+        w.appendChild(b);
+      });
+    }
+
+    $('q').addEventListener('input', function (e) { query = e.target.value; renderGrid(); });
+    $('fs').addEventListener('click', function () { var p = $('player'); if (p.requestFullscreen) p.requestFullscreen().catch(function () {}); });
+    $('share').addEventListener('click', function () {
+      var u = location.href.split('#')[0] + '#' + (cur ? cur.id : ''), b = this;
+      var done = function () { b.textContent = 'Link copied'; setTimeout(function () { b.textContent = 'Copy link'; }, 1800); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(u).then(done, function () {}); else done();
+    });
+    $('theme').addEventListener('click', function () {
+      var r = document.documentElement, l = r.getAttribute('data-theme') !== 'light';
+      if (l) r.setAttribute('data-theme', 'light'); else r.removeAttribute('data-theme');
+    });
+    $('y').textContent = new Date().getFullYear();
+    window.addEventListener('hashchange', function () { var h = location.hash.slice(1); if (h) show(h, true, false); });
+
+    renderChips(); renderGrid();
+    var h = location.hash.slice(1);
+    show(h || 'iss', !!h, false);
+  })();
   </script>
 </body>
 </html>
