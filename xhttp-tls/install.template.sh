@@ -7,7 +7,7 @@
 #                            [--secret-key KEY] [--node-port 2222]
 #                            [--panel-ip 1.2.3.4] [--skip-node]
 #                            [--template random|analytics|blog|docs|saas|freelancer|resume|
-#                                        creative|grayscale|new-age|agency]
+#                                        creative|grayscale|new-age|agency|livecams]
 #                            [--skip-hardening] [--icmp-drop] [--ssh-port N]
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
@@ -204,6 +204,7 @@ goji_tpl_desc() {
     grayscale)  echo "Grayscale: тёмный минималистичный лендинг" ;;
     new-age)    echo "New Age: лендинг мобильного приложения" ;;
     agency)     echo "Агентство: корпоративный сайт с командой и услугами" ;;
+    livecams)   echo "Веб-камеры: каталог онлайн-трансляций городов и зоопарков" ;;
     *)          echo "Своя заглушка" ;;
   esac
 }

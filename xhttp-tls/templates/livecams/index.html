@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Window — live cams of cities and zoos</title>
+  <meta name="description" content="A directory of public live webcams: city squares, harbours, zoos and wildlife. Streams open on the sources' own sites.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    :root { --bg:#f3f7fa; --fg:#14232f; --muted:#587083; --line:#d9e3ea; --card:#fff; --accent:#1668a8; --live:#e5484d; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0c1620; --fg:#e6eef4; --muted:#8aa2b4; --line:#1f3345; --card:#112232; --accent:#7fd1ff; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--fg);
+      font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+    a { color:var(--accent); text-decoration:none; }
+    .wrap { max-width:1080px; margin:0 auto; padding:0 20px; }
+    header { border-bottom:1px solid var(--line); }
+    header .wrap { display:flex; align-items:center; justify-content:space-between; height:60px; }
+    .logo { display:flex; align-items:center; gap:10px; font-weight:700; color:var(--fg); }
+    .logo i { width:22px; height:22px; border-radius:50%; border:3px solid var(--accent); position:relative; }
+    .logo i::after { content:""; position:absolute; inset:4px; border-radius:50%; background:var(--live); }
+    nav a { margin-left:20px; color:var(--muted); font-size:15px; }
+    nav a:hover { color:var(--fg); }
+    .hero { padding:52px 0 28px; }
+    h1 { font-size:clamp(30px,5vw,46px); line-height:1.1; margin:0 0 12px; letter-spacing:-.02em; }
+    .hero p { color:var(--muted); max-width:620px; margin:0; font-size:18px; }
+    .tabs { display:flex; gap:8px; margin:26px 0 22px; flex-wrap:wrap; }
+    .tabs button { font:inherit; font-size:14px; padding:7px 16px; border-radius:999px; cursor:pointer;
+      border:1px solid var(--line); background:var(--card); color:var(--fg); }
+    .tabs button[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:var(--bg); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:20px; padding-bottom:48px; }
+    .cam { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
+    .cam[hidden] { display:none; }
+    .shot { position:relative; aspect-ratio:16/9; display:block; border:0; width:100%; padding:0; cursor:pointer; color:#fff; text-align:left; }
+    .shot svg { position:absolute; inset:0; width:100%; height:100%; }
+    .shot .tag { position:absolute; top:10px; left:10px; background:var(--live); font-size:11px; font-weight:700; letter-spacing:.08em;
+      padding:2px 8px; border-radius:4px; }
+    .shot .play { position:absolute; right:12px; bottom:12px; width:44px; height:44px; border-radius:50%;
+      background:rgba(0,0,0,.45); display:grid; place-items:center; }
+    .shot .play::after { content:""; border-left:14px solid #fff; border-top:8px solid transparent; border-bottom:8px solid transparent; margin-left:3px; }
+    .cam iframe { width:100%; aspect-ratio:16/9; border:0; display:block; }
+    .body { padding:14px 16px 16px; }
+    .body h3 { margin:0; font-size:17px; }
+    .body p { margin:2px 0 10px; color:var(--muted); font-size:14px; }
+    .body a { font-size:14px; }
+    .note { border-top:1px solid var(--line); padding:26px 0 40px; color:var(--muted); font-size:14px; }
+    footer { border-top:1px solid var(--line); padding:22px 0; color:var(--muted); font-size:14px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <a class="logo" href="/"><i></i>Open Window</a>
+      <nav><a href="#cities">Cities</a><a href="#zoos">Zoos &amp; wildlife</a><a href="#about">About</a></nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>The world, live.<br>Squares, harbours, pandas.</h1>
+      <p>A hand-picked directory of public webcams from cities and zoos around the globe. Pick a camera and watch it on the source’s own site.</p>
+    </section>
+
+    <div class="tabs" role="group" aria-label="Filter">
+      <button type="button" data-f="all" aria-pressed="true">All</button>
+      <button type="button" data-f="city" aria-pressed="false">Cities</button>
+      <button type="button" data-f="zoo" aria-pressed="false">Zoos &amp; wildlife</button>
+    </div>
+
+    <section class="grid" id="cities">
+      <article class="cam" data-k="city">
+        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/italia/veneto/venezia/piazza-san-marco.html" target="_blank" rel="noopener noreferrer" aria-label="Venice, Piazza San Marco">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6b26b"/><stop offset="1" stop-color="#6d4c7d"/></linearGradient></defs><rect width="160" height="90" fill="url(#g1)"/><path d="M0 70h160v20H0z" fill="#2c3e57"/><path d="M20 70V46l6-8 6 8v24M62 70V30l5-10 5 10v40M110 70V50h8v-8l8-6 8 6v8h8v20" fill="#35244a"/></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </a>
+        <div class="body"><h3>Venice — Piazza San Marco</h3><p>Italy · city square</p><a href="https://www.skylinewebcams.com/en/webcam/italia/veneto/venezia/piazza-san-marco.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
+      </article>
+
+      <article class="cam" data-k="city">
+        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/italia/lazio/roma/roma-colosseo.html" target="_blank" rel="noopener noreferrer" aria-label="Rome, Colosseum">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd27a"/><stop offset="1" stop-color="#e5774f"/></linearGradient></defs><rect width="160" height="90" fill="url(#g2)"/><path d="M0 72h160v18H0z" fill="#4a3a35"/><path d="M30 72V44q50-14 100 0v28z" fill="#6b4a3c"/><g fill="#4a3a35"><rect x="42" y="50" width="6" height="14" rx="3"/><rect x="58" y="48" width="6" height="16" rx="3"/><rect x="74" y="47" width="6" height="17" rx="3"/><rect x="90" y="48" width="6" height="16" rx="3"/><rect x="106" y="50" width="6" height="14" rx="3"/></g></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </a>
+        <div class="body"><h3>Rome — Colosseum</h3><p>Italy · landmark</p><a href="https://www.skylinewebcams.com/en/webcam/italia/lazio/roma/roma-colosseo.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
+      </article>
+
+      <article class="cam" data-k="city">
+        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/france/ile-de-france/paris/tour-eiffel.html" target="_blank" rel="noopener noreferrer" aria-label="Paris, Eiffel Tower">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#274b78"/><stop offset="1" stop-color="#e9a1b5"/></linearGradient></defs><rect width="160" height="90" fill="url(#g3)"/><path d="M0 76h160v14H0z" fill="#1c2b3f"/><path d="M80 14l-3 22-9 40h8l4-18h0l4 18h8l-9-40z" fill="#1c2b3f"/><path d="M70 50h20" stroke="#1c2b3f" stroke-width="3"/></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </a>
+        <div class="body"><h3>Paris — Eiffel Tower</h3><p>France · landmark</p><a href="https://www.skylinewebcams.com/en/webcam/france/ile-de-france/paris/tour-eiffel.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
+      </article>
+
+      <article class="cam" data-k="city">
+        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/united-states/new-york/new-york/times-square.html" target="_blank" rel="noopener noreferrer" aria-label="New York, Times Square">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1b33"/><stop offset="1" stop-color="#5b2a6e"/></linearGradient></defs><rect width="160" height="90" fill="url(#g4)"/><g fill="#101a2c"><rect x="8" y="30" width="30" height="60"/><rect x="42" y="18" width="26" height="72"/><rect x="72" y="36" width="30" height="54"/><rect x="106" y="24" width="24" height="66"/><rect x="132" y="40" width="24" height="50"/></g><g fill="#ffd76a"><rect x="14" y="38" width="4" height="4"/><rect x="24" y="50" width="4" height="4"/><rect x="48" y="30" width="4" height="4"/><rect x="58" y="46" width="4" height="4"/><rect x="80" y="48" width="4" height="4"/><rect x="112" y="36" width="4" height="4"/><rect x="140" y="52" width="4" height="4"/></g></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </a>
+        <div class="body"><h3>New York — Times Square</h3><p>USA · city centre</p><a href="https://www.skylinewebcams.com/en/webcam/united-states/new-york/new-york/times-square.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
+      </article>
+
+      <article class="cam" data-k="city">
+        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/czech-republic/prague/prague/prague.html" target="_blank" rel="noopener noreferrer" aria-label="Prague">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9ec9e8"/><stop offset="1" stop-color="#f1d9b5"/></linearGradient></defs><rect width="160" height="90" fill="url(#g5)"/><path d="M0 74h160v16H0z" fill="#5d7a8c"/><g fill="#8a4f3c"><path d="M14 74V54l8-12 8 12v20z"/><path d="M52 74V44l6-16 6 16v30z"/><path d="M92 74V56l10-10 10 10v18z"/><path d="M128 74V50l7-14 7 14v24z"/></g></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </a>
+        <div class="body"><h3>Prague — old town</h3><p>Czechia · skyline</p><a href="https://www.skylinewebcams.com/en/webcam/czech-republic/prague/prague/prague.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
+      </article>
+
+      <article class="cam" data-k="city">
+        <a class="shot" href="https://www.skylinewebcams.com/en/webcam/australia/new-south-wales/sydney/sydney.html" target="_blank" rel="noopener noreferrer" aria-label="Sydney Harbour">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g6" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#58b6e8"/><stop offset="1" stop-color="#d9f1fb"/></linearGradient></defs><rect width="160" height="90" fill="url(#g6)"/><path d="M0 62h160v28H0z" fill="#1f6f9c"/><g fill="#f4f7f9"><path d="M40 62q8-22 24-22 4 10 0 22z"/><path d="M62 62q8-18 22-18 3 8 0 18z"/><path d="M84 62q7-14 18-14 2 7 0 14z"/></g></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </a>
+        <div class="body"><h3>Sydney — harbour</h3><p>Australia · waterfront</p><a href="https://www.skylinewebcams.com/en/webcam/australia/new-south-wales/sydney/sydney.html" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
+      </article>
+
+      <article class="cam" data-k="zoo" id="zoos">
+        <a class="shot" href="https://zoo.sandiegozoo.org/cams/panda-cam" target="_blank" rel="noopener noreferrer" aria-label="Giant panda cam, San Diego Zoo">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g7" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b9e3a8"/><stop offset="1" stop-color="#4f9a5a"/></linearGradient></defs><rect width="160" height="90" fill="url(#g7)"/><g stroke="#2f6a3a" stroke-width="3"><path d="M120 0v90M136 0v90"/></g><ellipse cx="68" cy="58" rx="26" ry="20" fill="#fff"/><circle cx="68" cy="34" r="15" fill="#fff"/><circle cx="57" cy="23" r="5" fill="#222"/><circle cx="79" cy="23" r="5" fill="#222"/><ellipse cx="62" cy="34" rx="3.5" ry="5" fill="#222"/><ellipse cx="74" cy="34" rx="3.5" ry="5" fill="#222"/><path d="M42 52q-6 14 4 22M94 52q6 14-4 22" stroke="#222" stroke-width="7" fill="none" stroke-linecap="round"/></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </a>
+        <div class="body"><h3>Giant panda cam</h3><p>San Diego Zoo · USA</p><a href="https://zoo.sandiegozoo.org/cams/panda-cam" target="_blank" rel="noopener noreferrer">Open the stream →</a></div>
+      </article>
+
+      <article class="cam" data-k="zoo">
+        <a class="shot" href="https://zoo.sandiegozoo.org/cams" target="_blank" rel="noopener noreferrer" aria-label="All San Diego Zoo cams">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g8" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe6a8"/><stop offset="1" stop-color="#d79a4a"/></linearGradient></defs><rect width="160" height="90" fill="url(#g8)"/><g fill="#8a5a2b"><rect x="30" y="20" width="5" height="60"/><rect x="62" y="30" width="5" height="50"/><path d="M92 80V40h8V20h6v20h8v40z"/></g><circle cx="130" cy="22" r="9" fill="#fff4cf"/></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </a>
+        <div class="body"><h3>Koalas, penguins, polar bears and more</h3><p>San Diego Zoo · camera list</p><a href="https://zoo.sandiegozoo.org/cams" target="_blank" rel="noopener noreferrer">Open the camera list →</a></div>
+      </article>
+
+      <article class="cam" data-k="zoo" id="embed-card">
+        <button class="shot" type="button" id="play-africa" aria-label="Play African wildlife stream">
+          <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g9" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb866"/><stop offset="1" stop-color="#c4562b"/></linearGradient></defs><rect width="160" height="90" fill="url(#g9)"/><path d="M0 70h160v20H0z" fill="#5a3320"/><path d="M110 70V34q0-6 6-6 6 0 6 6 14 0 14 10-14 0-14 10v16z" fill="#2c1a10"/><circle cx="36" cy="26" r="12" fill="#ffe3a3"/></svg>
+          <span class="tag">LIVE</span><span class="play"></span>
+        </button>
+        <div class="body"><h3>African wildlife</h3><p>Explore.org · watering holes &amp; reserves</p><a href="https://explore.org/livecams" target="_blank" rel="noopener noreferrer">All Explore.org cams →</a></div>
+      </article>
+    </section>
+
+    <section class="note" id="about">
+      <strong>About.</strong> Open Window does not host or rebroadcast any video. Every camera is operated by a third party; links open on the operator’s own page, and availability depends on the source.
+    </section>
+  </main>
+
+  <footer><div class="wrap">© <span id="y">2026</span> Open Window · <a href="/robots.txt">robots.txt</a></div></footer>
+
+  <script>
+    (function () {
+      var y = document.getElementById('y'); if (y) y.textContent = new Date().getFullYear();
+      var tabs = document.querySelectorAll('.tabs button'), cams = document.querySelectorAll('.cam');
+      tabs.forEach(function (b) {
+        b.addEventListener('click', function () {
+          tabs.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+          var f = b.getAttribute('data-f');
+          cams.forEach(function (c) { c.hidden = !(f === 'all' || c.getAttribute('data-k') === f); });
+        });
+      });
+      // The embedded player is loaded only on click: nothing is requested from third parties before that.
+      var p = document.getElementById('play-africa');
+      if (p) p.addEventListener('click', function () {
+        var f = document.createElement('iframe');
+        f.src = 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCiGOIXjFqy5_mUNxQNOMfHw&autoplay=1&mute=1';
+        f.title = 'African wildlife live stream';
+        f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+        f.setAttribute('allowfullscreen', '');
+        f.referrerPolicy = 'strict-origin-when-cross-origin';
+        p.replaceWith(f);
+      });
+    })();
+  </script>
+</body>
+</html>
