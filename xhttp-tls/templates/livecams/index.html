@@ -30,6 +30,10 @@
     @media (max-width:1000px) { .stage { grid-template-columns:1fr; } }
     .player { position:relative; aspect-ratio:16/9; background:#000; border-radius:8px; overflow:hidden; }
     .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+    .pmsg { position:absolute; left:0; right:0; bottom:0; z-index:3; padding:10px 14px; background:rgba(14,17,22,.88); color:#fff; font-size:13px; display:flex; gap:12px; align-items:center; justify-content:space-between; }
+    .pmsg button { background:#fff; color:#12171d; border:0; border-radius:5px; padding:5px 12px; cursor:pointer; font-size:12px; font-weight:600; }
+    .off .th { filter:grayscale(1) brightness(.6); }
+    .tag.o { background:#555; }
     .poster { position:absolute; inset:0; width:100%; height:100%; padding:0; border:0; cursor:pointer; background:#000 center/cover no-repeat; }
     .poster::after { content:""; position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.55),rgba(0,0,0,0) 45%); }
     .poster .pl { position:absolute; z-index:1; left:50%; top:50%; width:72px; height:72px; margin:-36px 0 0 -36px; border-radius:50%; background:rgba(14,17,22,.62); border:1.5px solid rgba(255,255,255,.85); }
@@ -114,7 +118,8 @@
 
   <script>
   (function () {
-    // v = YouTube video id of the broadcast. Every id below was checked as embeddable on YouTube.
+    // v = YouTube video id of the broadcast. Every id below was checked as embeddable on YouTube (oEmbed).
+    // Only YouTube is used. If a stream turns out to be unavailable, the player says so and moves on to the next one.
     var S = [
       { id:'iss',        cat:'space',    v:'M3HKLzjvKPc', t:'International Space Station — live from orbit', by:'NASA',
         d:'Live video from cameras on the International Space Station, the official NASA stream.' },
@@ -137,27 +142,105 @@
       { id:'jelly-pac',  cat:'aquarium', v:'IYG9fnz40-E', t:'Jellyfish — Aquarium of the Pacific', by:'explore.org',
         d:'Moon jellies drifting in the tank at the Aquarium of the Pacific, live.' },
       { id:'sharks',     cat:'aquarium', v:'o41HD4IiWoA', t:'Sharks and friends — aquarium cams', by:'EarthCam',
-        d:'EarthCam’s live view of sharks and other fish in a large aquarium.' }
+        d:'EarthCam’s live view of sharks and other fish in a large aquarium.' },
+      { id:'iss-hd',     cat:'space',    v:'awQzjn72bI0', t:'ISS — high-definition views of Earth', by:'NASA',
+        d:'Live high-definition views from the International Space Station, the official NASA stream.' },
+      { id:'nasa-live',  cat:'space',    v:'P11y8N22Rq0', t:'NASA Live — official stream of NASA TV', by:'NASA',
+        d:'NASA TV’s media channel: launches, spacewalks, briefings and mission coverage.' },
+      { id:'abbey-road', cat:'city',     v:'zMCea32gpmg', t:'London — Abbey Road crossing', by:'EarthCam',
+        d:'The famous zebra crossing on Abbey Road in London, live.' },
+      { id:'jackson',    cat:'city',     v:'1EiC9bvVGnk', t:'Jackson Hole — Town Square', by:'See Jackson Hole',
+        d:'A live view of the Town Square in Jackson, Wyoming, with the elk-antler arches.' },
+      { id:'monterey',   cat:'aquarium', v:'fuCeRkeDxtQ', t:'Monterey Bay — open sea tank', by:'Monterey Bay Aquarium',
+        d:'The Monterey Bay Aquarium’s live cam of the open-sea exhibit.' },
+      { id:'otters',     cat:'aquarium', v:'JQnxefImhu8', t:'Sea otters — Monterey Bay Aquarium', by:'Monterey Bay Aquarium',
+        d:'Live sea otter cam at the Monterey Bay Aquarium.' },
+      { id:'france24',   cat:'news',     v:'HvZt-nh9sGg', t:'FRANCE 24 English — live news', by:'FRANCE 24 English',
+        d:'International breaking news and top stories, 24/7.' },
+      { id:'sky',        cat:'news',     v:'xDWQ3LkccY8', t:'Sky News — live', by:'Sky News',
+        d:'Sky News live: breaking news and analysis from the UK and around the world.' },
+      { id:'dw',         cat:'news',     v:'LuKwFajn37U', t:'DW News — live', by:'DW News',
+        d:'Headline news from around the world from Deutsche Welle.' },
+      { id:'euronews',   cat:'news',     v:'pykpO5kQJ98', t:'Euronews English — live', by:'Euronews',
+        d:'Live European and world news in English.' },
+      { id:'aje',        cat:'news',     v:'yYO1EwNbgcQ', t:'Al Jazeera English — live', by:'Al Jazeera English',
+        d:'Al Jazeera English live stream.' },
+      { id:'abc',        cat:'news',     v:'iipR5yUp36o', t:'ABC News Live — 24/7 news', by:'ABC News',
+        d:'24/7 news, context and analysis from ABC News.' },
+      { id:'bloomberg',  cat:'news',     v:'iEpJwprxDdk', t:'Bloomberg Business News — live', by:'Bloomberg Television',
+        d:'Live business and markets news from Bloomberg Television.' }
     ];
-    var CATS = [['all','All'],['city','Cities'],['space','Space'],['zoo','Zoos'],['wildlife','Wildlife'],['aquarium','Aquariums']];
-    var LABEL = { city:'City', space:'Space', zoo:'Zoo', wildlife:'Wildlife', aquarium:'Aquarium' };
+    var CATS = [['all','All'],['city','Cities'],['space','Space'],['zoo','Zoos'],['wildlife','Wildlife'],['aquarium','Aquariums'],['news','News']];
+    var LABEL = { city:'City', space:'Space', zoo:'Zoo', wildlife:'Wildlife', aquarium:'Aquarium', news:'News' };
     var $ = function (id) { return document.getElementById(id); };
     var thumb = function (s) { return 'https://i.ytimg.com/vi/' + s.v + '/hqdefault.jpg'; };
     function find(id) { for (var i = 0; i < S.length; i++) if (S[i].id === id) return S[i]; return S[0]; }
     function img(el, s) { el.style.backgroundImage = 'url(' + thumb(s) + ')'; }
 
+    var tok = 0, wd = 0, apiState = 0, cbs = [];
+    function flush(ok) { var c = cbs; cbs = []; c.forEach(function (f) { f(ok); }); }
+    function loadApi(cb) {
+      if (window.YT && YT.Player) { cb(true); return; }
+      if (apiState === 3) { cb(false); return; }
+      cbs.push(cb); if (apiState === 1) return; apiState = 1;
+      window.onYouTubeIframeAPIReady = function () { apiState = 2; flush(true); };
+      var sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api';
+      sc.onerror = function () { apiState = 3; flush(false); }; document.head.appendChild(sc);
+      setTimeout(function () { if (apiState === 1) { apiState = 3; flush(false); } }, 7000);
+    }
+    function plain(mount, s) {
+      var f = document.createElement('iframe');
+      f.src = 'https://www.youtube-nocookie.com/embed/' + s.v + '?autoplay=1&mute=1&rel=0&playsinline=1';
+      f.title = s.t; f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      f.setAttribute('allowfullscreen', ''); f.referrerPolicy = 'strict-origin-when-cross-origin';
+      mount.innerHTML = ''; mount.appendChild(f);
+    }
+    function nextGood(s) {
+      var i = S.indexOf(s);
+      for (var k = 1; k < S.length; k++) { var n = S[(i + k) % S.length]; if (!n.bad) return n; }
+      return null;
+    }
+    function msg(text, withBtn) {
+      var old = document.getElementById('pmsg'); if (old) old.remove();
+      if (!text) return;
+      var d = document.createElement('div'); d.id = 'pmsg'; d.className = 'pmsg'; var sp = document.createElement('span'); sp.textContent = text; d.appendChild(sp);
+      if (withBtn) { var b = document.createElement('button'); b.type = 'button'; b.textContent = 'Next stream';
+        b.addEventListener('click', function () { var n = nextGood(cur); if (n) show(n.id, true, true); }); d.appendChild(b); }
+      $('player').appendChild(d);
+    }
+    function fail(s, my) {
+      if (my !== tok) return;
+      s.bad = true; renderGrid(); renderNext();
+      var n = nextGood(s);
+      msg(n ? 'This stream is not available right now. Switching to the next one…' : 'This stream is not available right now.');
+      if (n) setTimeout(function () { if (my === tok) show(n.id, true, true); }, 2200);
+    }
     var cur = null, filter = 'all', query = '';
     function show(id, play, push) {
       var s = find(id); cur = s;
       $('m-title').textContent = s.t; $('m-desc').textContent = s.d; $('m-cat').textContent = LABEL[s.cat]; $('m-src').textContent = s.by;
       document.title = s.t + ' — Open Window';
-      var box = $('player'); box.innerHTML = '';
+      var box = $('player'); box.innerHTML = ''; tok++; clearTimeout(wd);
       if (play) {
-        var f = document.createElement('iframe');
-        f.src = 'https://www.youtube-nocookie.com/embed/' + s.v + '?autoplay=1&mute=1&rel=0&playsinline=1';
-        f.title = s.t; f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-        f.setAttribute('allowfullscreen', ''); f.referrerPolicy = 'strict-origin-when-cross-origin';
-        box.appendChild(f);
+        var mount = document.createElement('div'); mount.style.cssText = 'position:absolute;inset:0'; box.appendChild(mount);
+        var my = tok;
+        loadApi(function (ok) {
+          if (my !== tok) return;
+          if (ok) {
+            try {
+              var pv = { autoplay: 1, mute: 1, rel: 0, playsinline: 1 };
+              if (/^https?:/.test(location.protocol)) pv.origin = location.origin;
+              new YT.Player(mount, { host: 'https://www.youtube-nocookie.com', videoId: s.v, playerVars: pv, events: {
+                onReady: function (e) { try { e.target.mute(); e.target.playVideo(); } catch (x) {} },
+                onStateChange: function (e) { if (my === tok && (e.data === 1 || e.data === 3)) { clearTimeout(wd); msg(null); } },
+                onError: function () { fail(s, my); }
+              } });
+              wd = setTimeout(function () { if (my === tok) msg('The stream is taking a while to start.', true); }, 15000);
+              return;
+            } catch (x) {}
+          }
+          plain(mount, s);
+        });
       } else {
         var b = document.createElement('button'); b.className = 'poster'; b.type = 'button'; b.setAttribute('aria-label', 'Play: ' + s.t);
         img(b, s); b.innerHTML = '<span class="pl"></span>';
@@ -169,7 +252,8 @@
     }
     function mk(s, cls) {
       var b = document.createElement('button'); b.type = 'button'; b.className = cls;
-      b.innerHTML = '<div class="th"><span class="tag">LIVE</span></div><div><b></b><small></small></div>';
+      b.innerHTML = '<div class="th"><span class="tag' + (s.bad ? ' o' : '') + '">' + (s.bad ? 'OFFLINE' : 'LIVE') + '</span></div><div><b></b><small></small></div>';
+      if (s.bad) b.className += ' off';
       img(b.querySelector('.th'), s);
       b.querySelector('b').textContent = s.t; b.querySelector('small').textContent = s.by + ' · ' + LABEL[s.cat];
       b.addEventListener('click', function () { show(s.id, true, true); window.scrollTo({ top: 0, behavior: 'smooth' }); });

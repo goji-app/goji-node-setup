@@ -22,7 +22,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.3.9
+VERSION=1.3.10
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -209,7 +209,7 @@ goji_tpl_desc() {
     grayscale)  echo "Fjellro: горные домики в Норвегии, запрос на бронь" ;;
     new-age)    echo "Habitual: лендинг приложения-трекера привычек" ;;
     agency)     echo "Fieldstone: студия брендинга и веб-дизайна" ;;
-    livecams)   echo "Веб-камеры: онлайн-трансляции МКС, зоопарков, океана и городов (плеер на сайте)" ;;
+    livecams)   echo "Open Window: 24 YouTube-трансляции (камеры городов, МКС, зоопарки, новости), плеер на сайте" ;;
     *)          echo "Своя заглушка" ;;
   esac
 }

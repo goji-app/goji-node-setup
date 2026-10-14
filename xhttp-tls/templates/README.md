@@ -17,7 +17,7 @@ After editing anything here run `python build.py` to re-embed them into `install
 | grayscale | Fjellro — mountain cabins in Norway, booking request form | written for this repo; photos: see THIRD-PARTY-NOTICES.md |
 | new-age | Habitual — habit tracker app landing, CSS phone mock-up | written for this repo; photos: see THIRD-PARTY-NOTICES.md |
 | agency | Fieldstone Studio — brand and web design studio, team, work | written for this repo; photos: see THIRD-PARTY-NOTICES.md |
-| livecams | Open Window — live streams (11 YouTube video ids listed in `S` in index.html, each checked as embeddable via YouTube oEmbed; thumbnails from i.ytimg.com, player loaded only on click) | written for this repo |
+| livecams | Open Window — 24 YouTube live streams (cities, ISS/NASA, zoos, aquariums, wildlife, news); ids in `S` in index.html, each checked as embeddable via YouTube oEmbed; YouTube IFrame API with auto-skip of unavailable streams; thumbnails from i.ytimg.com | written for this repo |
 
 All templates are self-contained (no CDN scripts, fonts or frameworks; forms are client-side only and send nothing).
 Photo licenses and credits: `THIRD-PARTY-NOTICES.md`.
