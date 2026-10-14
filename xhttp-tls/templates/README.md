@@ -17,5 +17,6 @@ After editing anything here run `python build.py` to re-embed them into `install
 | grayscale | [StartBootstrap/startbootstrap-grayscale](https://github.com/StartBootstrap/startbootstrap-grayscale) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
 | new-age | [StartBootstrap/startbootstrap-new-age](https://github.com/StartBootstrap/startbootstrap-new-age) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
 | agency | [StartBootstrap/startbootstrap-agency](https://github.com/StartBootstrap/startbootstrap-agency) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
+| livecams | written for this repo (links to third-party webcam pages; one YouTube live embed, loaded only on click) | — |
 
 Each third-party template keeps its original LICENSE; it is served as `LICENSE.txt`.
