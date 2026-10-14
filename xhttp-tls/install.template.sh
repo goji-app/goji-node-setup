@@ -22,7 +22,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.3.8
+VERSION=1.3.9
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -298,7 +298,7 @@ gjc_node() {
   if [[ $GOJI_XPATH == /api/v2/telemetry/ ]]; then
     gj_row warn "Путь XHTTP" "$GOJI_XPATH — общий из публичного репозитория, ноду по нему легко найти; новый: bash install.sh --resume --path random, затем профиль и хост в Remnawave"
   else
-    gj_row ok "Путь XHTTP" "свой для этого сервера"
+    gj_row ok "Путь XHTTP" "$GOJI_XPATH — свой для этого сервера (случайный, не общий)"
   fi
   if [[ -n ${GOJI_NODE_PORT:-} ]]; then
     if command -v docker >/dev/null && [[ "$(docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null)" == true ]]; then
