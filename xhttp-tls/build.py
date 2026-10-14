@@ -20,3 +20,10 @@ src = open(os.path.join(here, "install.template.sh"), encoding="utf-8").read()
 prof = base64.b64encode(open(os.path.join(here, "xray-node-profile.json"), "rb").read()).decode()
 open(os.path.join(here, "install.sh"), "w", encoding="utf-8", newline="\n").write(src.replace("__TEMPLATES_B64__", b64).replace("__PROFILE_B64__", prof))
 print(f"install.sh built, templates archive {len(buf.getvalue())//1024} KB")
+# Файлы для самообновления установщика (goji-node update): версия и контрольная сумма install.sh.
+import hashlib, re
+ver = re.search(r"^VERSION=(\S+)", src, re.M).group(1)
+open(os.path.join(here, "VERSION"), "w", newline="\n").write(ver + "\n")
+with open(os.path.join(here, "install.sh"), "rb") as fh:
+    open(os.path.join(here, "install.sh.sha256"), "w", newline="\n").write(hashlib.sha256(fh.read()).hexdigest() + "  install.sh\n")
+print("VERSION", ver)
