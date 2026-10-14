@@ -4,7 +4,7 @@
 
 > One command to turn a fresh Debian/Ubuntu VPS into a Remnawave node behind nginx + Let's Encrypt, with an XHTTP Xray profile and a static site on every other path.
 
-**Текущая версия: 1.3.9** — проверка показывает фактический путь XHTTP (1.3.8: все сайты-заглушки переписаны с реальными фото). Полная история: [CHANGELOG.md](CHANGELOG.md).
+**Текущая версия: 1.3.10** — livecams: только YouTube, 24 трансляции (в т.ч. новости), автопереход при недоступном эфире. Полная история: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -149,7 +149,7 @@ flowchart LR
 | `grayscale` | Fjellro — горные домики в Норвегии, запрос брони | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
 | `new-age` | Habitual — лендинг приложения-трекера привычек | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
 | `agency` | Fieldstone — студия брендинга и веб-дизайна: услуги, работы, команда | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
-| `livecams` | сайт «Open Window» с онлайн-трансляциями (города, МКС, зоопарк, аквариумы, дикая природа): плеер на странице, превью и видео подгружаются с YouTube, плеер — по клику | написан для этого репозитория |
+| `livecams` | сайт «Open Window»: 24 YouTube-трансляции (камеры городов, МКС и NASA, зоопарки, аквариумы, дикая природа, новости); плеер на странице, при недоступном эфире переключается на следующий | написан для этого репозитория |
 
 Заглушку можно выбрать в меню при установке или флагом `--template`; без терминала выбирается случайная. При повторном запуске сохраняется выбранный шаблон, сменить его позже: `goji-node decoy` (меню) или `goji-node decoy <имя>`. Шаблоны Start Bootstrap взяты из `dist/` репозиториев, изображения пересжаты, рекламные тексты и ссылки на сайт-источник заменены, скрипт стороннего сервиса форм удалён. Часть шаблонов подгружает Bootstrap-скрипт, шрифты и иконки с публичных CDN (jsDelivr, Google Fonts, Font Awesome), как и оригиналы. Лицензии сторонних шаблонов лежат рядом с ними и отдаются как `LICENSE.txt`.
 
