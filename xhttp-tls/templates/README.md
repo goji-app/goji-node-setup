@@ -5,18 +5,19 @@
 `goji-node decoy` switches it later).
 After editing anything here run `python build.py` to re-embed them into `install.sh`.
 
-| Name | Source | License |
+| Name | Site (fictional) | Source |
 |---|---|---|
-| analytics | written for this repo | — |
-| blog | [westtle/simple-blog-template](https://github.com/westtle/simple-blog-template) | MIT (LICENSE) |
-| docs | [JMcrafter26/tiny-docs](https://github.com/JMcrafter26/tiny-docs) (`tinydocs.html`) | MIT (LICENSE) |
-| saas | [hannah-wright/saas-landing-page-template](https://github.com/hannah-wright/saas-landing-page-template) (`html/index.html`) | MIT (LICENSE) |
-| freelancer | [StartBootstrap/startbootstrap-freelancer](https://github.com/StartBootstrap/startbootstrap-freelancer) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
-| resume | [StartBootstrap/startbootstrap-resume](https://github.com/StartBootstrap/startbootstrap-resume) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
-| creative | [StartBootstrap/startbootstrap-creative](https://github.com/StartBootstrap/startbootstrap-creative) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
-| grayscale | [StartBootstrap/startbootstrap-grayscale](https://github.com/StartBootstrap/startbootstrap-grayscale) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
-| new-age | [StartBootstrap/startbootstrap-new-age](https://github.com/StartBootstrap/startbootstrap-new-age) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
-| agency | [StartBootstrap/startbootstrap-agency](https://github.com/StartBootstrap/startbootstrap-agency) (`dist/`; images recompressed, texts and promo links replaced, form-service script removed) | MIT, Copyright 2013-2023 Start Bootstrap LLC (LICENSE) |
-| livecams | written for this repo (live-stream site; 11 YouTube video ids listed in `STREAMS` in index.html, each checked as embeddable via YouTube oEmbed; thumbnails from i.ytimg.com, player loaded only on click) | — |
+| analytics | Quillmetric — cookie-free web analytics, SVG dashboard, pricing | written for this repo; portraits: see THIRD-PARTY-NOTICES.md |
+| blog | Lantern & Road — travel blog, 6 articles + about | written for this repo; photos: see THIRD-PARTY-NOTICES.md |
+| docs | Postline API Reference — sidebar, filter, code samples (no external scripts) | written for this repo |
+| saas | Stackpulse — uptime monitoring landing page, pricing | written for this repo; portraits/office photo: see THIRD-PARTY-NOTICES.md |
+| freelancer | Maren Holt — travel photographer portfolio, 12 photos, lightbox | written for this repo; photos: see THIRD-PARTY-NOTICES.md |
+| resume | Daniel Okafor — backend engineer CV | written for this repo; portrait: see THIRD-PARTY-NOTICES.md |
+| creative | Oak & Ledger — handmade goods shop with basket | written for this repo; photos from startbootstrap-creative (MIT) |
+| grayscale | Fjellro — mountain cabins in Norway, booking request form | written for this repo; photos: see THIRD-PARTY-NOTICES.md |
+| new-age | Habitual — habit tracker app landing, CSS phone mock-up | written for this repo; photos: see THIRD-PARTY-NOTICES.md |
+| agency | Fieldstone Studio — brand and web design studio, team, work | written for this repo; photos: see THIRD-PARTY-NOTICES.md |
+| livecams | Open Window — live streams (11 YouTube video ids listed in `S` in index.html, each checked as embeddable via YouTube oEmbed; thumbnails from i.ytimg.com, player loaded only on click) | written for this repo |
 
-Each third-party template keeps its original LICENSE; it is served as `LICENSE.txt`.
+All templates are self-contained (no CDN scripts, fonts or frameworks; forms are client-side only and send nothing).
+Photo licenses and credits: `THIRD-PARTY-NOTICES.md`.
