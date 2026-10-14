@@ -1,7 +1,7 @@
 # XHTTP + TLS нода — установка
 
 Схема: клиент → `<домен>:443` (TLS, h2) → nginx →
-`/api/v2/telemetry/` → Xray `127.0.0.1:10443` (XHTTP, security none).
+случайный путь XHTTP (свой на каждом сервере, `--path`) → Xray `127.0.0.1:10443` (XHTTP, security none).
 Всё остальное nginx отдаёт как сайт-заглушку.
 
 ## Установка (на VPS, от root)
@@ -25,9 +25,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/mai
 - **Auto tuning** — sysctl: буферы, backlog, somaxconn, keepalive, TCP Fast Open, conntrack, rp_filter, отключение redirects/source-route.
 - **tc fq** — `goji-tc.service`: qdisc fq на интерфейсе с маршрутом по умолчанию (не в контейнерах).
 - **ZRAM** — `goji-zram.service`, 50% RAM, zstd (fallback lz4); настройки в `/etc/default/goji-zram` (не в контейнерах).
-- **UFW** — deny incoming / allow outgoing; открыты SSH, 80, 443, порт ноды (только с `--panel-ip`, если он задан) и порты, которые сейчас слушает xray.
+- **UFW** — deny incoming / allow outgoing; открыты SSH, 80, 443, порт ноды (только с `--panel-ip`, если он задан; правило «всем» от прежней установки при этом снимается, `goji-node check` помечает его красным, `goji-node fix` убирает) и порты, которые сейчас слушает xray.
+  Порты, которые контейнеры Docker публикуют на все адреса (`-p 1080:1080`), UFW не закрывает: Docker ставит свои правила раньше. `goji-node check` показывает такие порты красным, если UFW их не разрешает, и подсказывает привязать их к `127.0.0.1` / `172.17.0.1`; чужие контейнеры скрипт не пересоздаёт.
 - **Fail2ban** — jail `sshd` и `recidive` (`/etc/fail2ban/jail.d/goji.local`), IP панели в игнор-листе.
 - **SSH** — drop-in `/etc/ssh/sshd_config.d/00-goji-hardening.conf`: `MaxAuthTries 4`, `LoginGraceTime 30`, запрет agent/tunnel/X11 forwarding и `GatewayPorts`. Способ входа, `PermitRootLogin` и `AllowTcpForwarding` не меняются: скрипт сравнивает `sshd -T` до и после и при любом расхождении или ошибке откатывает файл (копии в `/var/backups/goji-node`). Если вы ходите через `ssh -A` (agent forwarding), добавьте исключение сами.
+- **Вход только по ключу** (по выбору: вопрос при установке или `--ssh-keys-only`) — отдельный drop-in `00-goji-keys-only.conf`: `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, а если root входил по паролю — `PermitRootLogin prohibit-password`. Скрипт не включит его, если у пользователя сессии нет ключей в `authorized_keys` или эта сессия вошла по паролю (смотрит журнал sshd); если другой файл `sshd_config.d` читается раньше и снова разрешает пароль — файл откатывается с объяснением. Выключить: `--no-ssh-keys-only`. Перед выходом проверьте вход по ключу во второй сессии.
 - **Защита от ping** — nftables-таблица `inet goji_privacy` (`goji-two-way-ping.service`, поднимается до `network-pre.target`): входящий echo-request (IPv4/IPv6) ограничен до 5/сек, ICMP timestamp-request блокируется; `--icmp-drop` — полная блокировка echo. Исходящий ping, ICMP-ошибки, PMTUD и IPv6 neighbour discovery не затрагиваются. Режим: `/etc/default/goji-two-way-ping`. Правила старых версий в `/etc/ufw/before*.rules` (метка `goji-icmp`) удаляются. Пакет `nftables` ставится до любых правил файрвола, а его собственная служба `nftables.service` (на загрузке делает `flush ruleset`) отключается, если пакета раньше не было.
 - **Traffic Control (по желанию)** — `--traffic-control` (или ответ `y` на вопрос при установке). Таблица nftables `inet goji_guard` блокирует новые входящие соединения из сетей публичных списков [shadow-netlab/traffic-guard-lists](https://github.com/shadow-netlab/traffic-guard-lists) (`antiscanner`, `government_networks`, `skipa`). Исключены: loopback, уже установленные соединения, IP администратора (адрес текущей SSH-сессии и `--admin-ip`), IP панели, порт SSH и TCP/80 (чтобы не сломать продление сертификата). Списки обновляются раз в сутки (`goji-guard-update.timer`), хранятся локально, при сбое загрузки остаётся последняя рабочая копия. Из списка отбрасываются слишком широкие сети (шире /8 для IPv4, /16 для IPv6) и приватные диапазоны; список с мусором (>5% строк не IP/CIDR) отклоняется целиком. Управление: `goji-guard status | update | on | off`. Списки — сторонние, их состав вы не контролируете: оцените, не заденет ли он ваших пользователей.
 
@@ -107,7 +109,7 @@ bash install.sh --resume       # повторить установку с сох
 |---|---|
 | Адрес / порт | <домен> / 443 |
 | Network | xhttp |
-| Path | /api/v2/telemetry/ |
+| Path | путь из вывода установщика (`goji-node profile`) |
 | Mode | auto |
 | Security | tls |
 | SNI | <домен> |
