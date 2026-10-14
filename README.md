@@ -4,7 +4,7 @@
 
 > One command to turn a fresh Debian/Ubuntu VPS into a Remnawave node behind nginx + Let's Encrypt, with an XHTTP Xray profile and a static site on every other path.
 
-**Текущая версия: 1.3.8** — все сайты-заглушки переписаны с реальными фото. Полная история: [CHANGELOG.md](CHANGELOG.md).
+**Текущая версия: 1.3.9** — проверка показывает фактический путь XHTTP (1.3.8: все сайты-заглушки переписаны с реальными фото). Полная история: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
