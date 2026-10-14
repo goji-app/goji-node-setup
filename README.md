@@ -4,7 +4,7 @@
 
 > One command to turn a fresh Debian/Ubuntu VPS into a Remnawave node behind nginx + Let's Encrypt, with an XHTTP Xray profile and a static site on every other path.
 
-**Текущая версия: 1.3.10** — livecams: только YouTube, 24 трансляции (в т.ч. новости), автопереход при недоступном эфире. Полная история: [CHANGELOG.md](CHANGELOG.md).
+**Текущая версия: 1.4.0** — скрипт сам сообщает о новой версии и умеет обновляться (`goji-node update`). Полная история: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -98,6 +98,8 @@ flowchart LR
 | `--settings` | — | показать настройки, с которыми сервер был установлен (то же: `goji-node settings`). На уже настроенном сервере запуск без параметров сначала предлагает меню: проверка, настройки, `goji-node`, переустановка |
 | `--resume` | — | повторить установку с сохранёнными параметрами |
 | `--version` | — | версия установщика |
+| `--update` / `--check-update` | — | скачать новую версию с GitHub / только проверить (то же: `goji-node update`) |
+| `--no-update-check` | — | отключить проверку и уведомления об обновлениях |
 | `--ssh-port` | определяется | порт SSH для UFW и Fail2ban |
 | `--ssh-keys-only` / `--no-ssh-keys-only` | спросить | вход по SSH только по ключу: отключает пароль и keyboard-interactive, root по паролю → только по ключу. Включается, только если у пользователя сессии есть ключи в `authorized_keys` и сама сессия вошла не по паролю |
 | `--allow-port` | — | дополнительный порт для UFW (`8443`, `8443/udp`), флаг можно повторять |
@@ -157,6 +159,30 @@ flowchart LR
 
 ---
 
+## Обновление установщика
+
+Скрипт сам проверяет, вышла ли новая версия в этом репозитории (файл `xhttp-tls/VERSION`), и сообщает об этом:
+в меню `goji-node`, в конце `goji-node check`, при запуске `install.sh` и при входе root по SSH.
+Проверка идёт не чаще раза в сутки (раз в сутки обновляет кэш cron), запрос только к `raw.githubusercontent.com`.
+
+```bash
+goji-node update            # показать, что изменилось, скачать новый install.sh и предложить применить
+goji-node update --check    # только проверить (код выхода 10, если есть обновление)
+goji-node update --notes    # только список изменений
+goji-node update --yes      # без вопросов
+goji-node update --no-apply # скачать, но не применять
+bash install.sh --update    # то же, если goji-node ещё не установлен
+goji-node update --off      # отключить проверки и уведомления (--on — включить снова)
+```
+
+Скачанный файл проверяется (размер, `bash -n`, версия внутри, sha256 из `install.sh.sha256`) и сохраняется как
+`/usr/share/goji-node/install.sh`; предыдущая версия — `install.sh.prev`. «Применить» — это повторный проход
+`install.sh --resume --wait 0` с сохранёнными настройками. Контрольная сумма лежит в том же репозитории,
+поэтому защищает от повреждённой загрузки, но не от подмены самого репозитория. Версии до 1.4.0 команды `update`
+не имеют: один раз скачайте новый `install.sh` вручную и запустите `bash install.sh --resume`.
+
+---
+
 ## Состав репозитория
 
 ```
@@ -164,6 +190,7 @@ CHANGELOG.md              история версий
 xhttp-tls/
 ├── install.sh            готовый установщик (шаблоны встроены, один файл)
 ├── install.template.sh   исходник установщика
+├── VERSION, install.sh.sha256   версия и контрольная сумма (для goji-node update; создаёт build.py)
 ├── build.py              встраивает templates/ в install.template.sh -> install.sh
 ├── templates/            сайты-заглушки (+ THIRD-PARTY-NOTICES.md)
 ├── nginx-template.conf   эталон конфига nginx, который собирает скрипт

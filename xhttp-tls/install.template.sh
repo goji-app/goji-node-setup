@@ -14,6 +14,7 @@
 #                            [--upgrade-os|--no-upgrade-os] [--ssh-keys-only|--no-ssh-keys-only]
 #   bash install.sh --check | --fix | --settings | --uninstall | --resume | --version
 #   --fix: найти ошибки и исправить безопасные автоматически (goji-node fix [--dry-run] — то же без переустановки)
+#   bash install.sh --update [--yes] | --check-update   — новая версия с GitHub (то же: goji-node update; отключить: --no-update-check)
 # После установки: goji-node — меню проверки, профиль для Remnawave, смена заглушки.
 #
 # Переустанавливает Remnawave Node (docker, /opt/remnanode), спрашивая SECRET_KEY и т. д.
@@ -22,7 +23,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.3.10
+VERSION=1.4.0
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -57,6 +58,12 @@ FIX=0
 SETTINGS=0
 UNINSTALL=0
 ARGC=$#
+UPDATE=""
+UPD_ARGS=()
+NO_UPD=0
+# Файл, из которого запущен скрипт (для самообновления); при запуске через `curl | bash` пусто.
+GOJI_SELF=""
+[[ -f $0 && $0 == *.sh ]] && GOJI_SELF=$(readlink -f "$0") || true
 
 die()  { echo -e "\e[31m[x] $*\e[0m" >&2; exit 1; }
 info() { echo -e "\e[36m[*] $*\e[0m"; }
@@ -433,6 +440,7 @@ goji_check() {
     all|*)    gjc_web; gjc_node; gjc_system; gjc_security ;;
   esac
   gjc_summary
+  gup_notice
 }
 
 # ---- автоисправление ---------------------------------------------------------------------
@@ -811,7 +819,7 @@ gju_do() {
         gj_row ok "Правила UFW" "правила установщика удалены (SSH и политика по умолчанию не тронуты)"
       else gj_row ok "Правила UFW" "ufw не установлен"; fi ;;
     tools)
-      rm -f /usr/local/sbin/goji-node-check /usr/local/sbin/goji-node
+      rm -f /usr/local/sbin/goji-node-check /usr/local/sbin/goji-node /etc/cron.d/goji-update-check /etc/profile.d/goji-update.sh
       rm -rf /usr/share/goji-node /etc/goji-node
       gj_row ok "goji-node и настройки" "удалены (копии в /var/backups/goji-node остаются)" ;;
   esac
@@ -870,12 +878,156 @@ goji_uninstall() {
   return 0
 }
 
+# ---------------------------------------------------------------- обновление установщика
+# Версия берётся из xhttp-tls/VERSION в репозитории GitHub; новый install.sh скачивается, проверяется
+# (размер, bash -n, версия, sha256) и кладётся в /usr/share/goji-node/install.sh. Источник можно сменить
+# переменными GOJI_UPDATE_REPO / GOJI_UPDATE_BRANCH (например, для форка). Отключить: goji-node update --off.
+GOJI_REPO=goji-app/goji-node-setup
+GOJI_BRANCH=main
+gup_get() { # gup_get <путь в репозитории> <файл|-> [таймаут, с]
+  local url="https://raw.githubusercontent.com/${GOJI_UPDATE_REPO:-$GOJI_REPO}/${GOJI_UPDATE_BRANCH:-$GOJI_BRANCH}/$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --proto '=https' --tlsv1.2 --max-time "${3:-20}" -o "$2" "$url" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$2" --timeout="${3:-20}" "$url" 2>/dev/null
+  else
+    return 1
+  fi
+}
+gup_gt() { [[ $1 != "$2" && $(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1) == "$1" ]]; } # версия $1 новее $2
+gup_latest() { # версия на GitHub (печатает X.Y.Z)
+  local v
+  v=$(gup_get xhttp-tls/VERSION - "${1:-8}" | head -n 1 | tr -d '[:space:]') || return 1
+  [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  echo "$v"
+}
+gup_off() { [[ ${GOJI_UPDATE_CHECK:-1} == 0 || -e $GOJI_ETC/no-update-check ]]; }
+gup_refresh() { # обновить кэш $GOJI_ETC/update-check ("<время> <версия>")
+  local v
+  mkdir -p "$GOJI_ETC" 2>/dev/null || return 1
+  if v=$(gup_latest "${1:-5}"); then
+    echo "$(date +%s) $v" > "$GOJI_ETC/update-check"; rm -f "$GOJI_ETC/update-fail"; return 0
+  fi
+  : > "$GOJI_ETC/update-fail"; return 1
+}
+gup_cached() { # версия из кэша: свежего (младше суток) или, с аргументом any, любого
+  local ts v
+  [[ -r $GOJI_ETC/update-check ]] || return 1
+  read -r ts v < "$GOJI_ETC/update-check" || return 1
+  [[ $ts =~ ^[0-9]+$ && $v =~ ^[0-9.]+$ ]] || return 1
+  [[ ${1:-} == any ]] || (( $(date +%s) - ts < 86400 )) || return 1
+  echo "$v"
+}
+gup_notice() { # короткое уведомление о новой версии; сеть — не чаще раза в сутки, таймаут 4 с
+  gup_off && return 0
+  local v
+  if ! v=$(gup_cached); then
+    # после неудачной попытки час не повторяем, чтобы не задерживать запуск без сети
+    if [[ -z $(find "$GOJI_ETC/update-fail" -mmin -60 2>/dev/null) ]]; then gup_refresh 4 || true; fi
+    v=$(gup_cached any) || return 0
+  fi
+  gup_gt "$v" "$VERSION" || return 0
+  gjm_init
+  printf '\n  %s↑ Доступна новая версия установщика: %s%s%s (установлена %s). Обновить: %sgoji-node update%s\n' \
+    "$GM_YEL" "$GM_B" "$v" "$GM_R$GM_YEL" "$VERSION" "$GM_B" "$GM_R"
+}
+gup_notes() { # gup_notes <установленная версия>: записи CHANGELOG.md новее неё
+  local tmp line v on=0
+  tmp=$(mktemp) || return 1
+  if ! gup_get CHANGELOG.md "$tmp" 10; then rm -f "$tmp"; return 1; fi
+  while IFS= read -r line; do
+    if [[ $line =~ ^##[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+      v=${BASH_REMATCH[1]}; on=0; if gup_gt "$v" "$1"; then on=1; fi
+    fi
+    if (( on )); then printf '  %s\n' "$line"; fi
+  done < "$tmp"
+  rm -f "$tmp"
+  return 0
+}
+gup_reject() { rm -f "$1"; echo "${GM_RED}Файл не принят: $2${GM_R}" >&2; }
+gup_install() { # gup_install <версия> <применить 0|1> <без вопросов 0|1>
+  local latest=$1 apply=$2 yes=$3 tmp sum r
+  mkdir -p "$GOJI_SHARE"
+  tmp=$(mktemp "$GOJI_SHARE/.install.XXXXXX") || return 1
+  echo "Скачиваю install.sh $latest…"
+  if ! gup_get xhttp-tls/install.sh "$tmp" 120; then rm -f "$tmp"; echo "${GM_RED}Не удалось скачать install.sh.${GM_R}" >&2; return 1; fi
+  if (( $(stat -c %s "$tmp") < 500000 )) || ! head -n 1 "$tmp" | grep -q '^#!'; then gup_reject "$tmp" "слишком маленький или не скрипт"; return 1; fi
+  bash -n "$tmp" 2>/dev/null || { gup_reject "$tmp" "ошибка синтаксиса bash"; return 1; }
+  [[ $(bash "$tmp" --version 2>/dev/null) == "goji-node-setup $latest" ]] || { gup_reject "$tmp" "версия внутри файла не $latest"; return 1; }
+  sum=$(gup_get xhttp-tls/install.sh.sha256 - 10 | awk '{print $1}') || sum=""
+  if [[ -n $sum ]]; then
+    [[ $(sha256sum "$tmp" | awk '{print $1}') == "$sum" ]] || { gup_reject "$tmp" "контрольная сумма не совпала (возможно, кэш GitHub: повторите через несколько минут)"; return 1; }
+  else
+    echo "  Файл контрольной суммы недоступен — проверка sha256 пропущена."
+  fi
+  [[ ! -f $GOJI_SHARE/install.sh ]] || cp -f "$GOJI_SHARE/install.sh" "$GOJI_SHARE/install.sh.prev"
+  chmod 755 "$tmp"; mv -f "$tmp" "$GOJI_SHARE/install.sh"
+  echo "${GM_GRN}Версия $latest сохранена:${GM_R} $GOJI_SHARE/install.sh (предыдущая — install.sh.prev)"
+  # Файл, из которого запущен текущий скрипт, заменяем новым inode: bash читает скрипт по ходу работы.
+  if [[ -n ${GOJI_SELF:-} && -f $GOJI_SELF && -w $GOJI_SELF && $GOJI_SELF != "$GOJI_SHARE/install.sh" ]]; then
+    if cp -f "$GOJI_SHARE/install.sh" "$GOJI_SELF.new" && mv -f "$GOJI_SELF.new" "$GOJI_SELF"; then echo "Обновлён и файл $GOJI_SELF"; fi
+  fi
+  if (( ! apply )); then echo "Применить позже: bash $GOJI_SHARE/install.sh --resume --wait 0"; return 0; fi
+  if (( ! yes )); then
+    echo "Применение — повторный проход установки (--resume) с сохранёнными настройками: обновит команду goji-node,"
+    echo "шаблоны сайтов и настройки сервера. Ключи и профиль ноды не меняются."
+    read -r -p "Применить сейчас? [Y/n] " r </dev/tty || return 0
+    [[ -z $r || $r == [YyДд]* ]] || { echo "Применить позже: bash $GOJI_SHARE/install.sh --resume --wait 0"; return 0; }
+  fi
+  bash "$GOJI_SHARE/install.sh" --resume --wait 0
+}
+# goji_update [--check|--notes|--yes|--no-apply|--refresh|--off|--on]
+goji_update() {
+  local yes=0 apply=1 mode=run a latest r
+  for a in "$@"; do
+    case "$a" in
+      --check) mode=check ;;
+      --notes) mode=notes ;;
+      --refresh) mode=refresh ;;
+      --off) mode=off ;;
+      --on) mode=on ;;
+      --yes|-y) yes=1 ;;
+      --no-apply) apply=0 ;;
+      *) echo "goji-node update [--check | --notes | --yes | --no-apply | --off | --on]" >&2; return 1 ;;
+    esac
+  done
+  case $mode in
+    off) mkdir -p "$GOJI_ETC"; : > "$GOJI_ETC/no-update-check"; rm -f /etc/cron.d/goji-update-check /etc/profile.d/goji-update.sh
+         echo "Проверка обновлений выключена (включить: goji-node update --on)"; return 0 ;;
+    on)  rm -f "$GOJI_ETC/no-update-check"; echo "Проверка обновлений включена. Ежедневная проверка и уведомление при входе вернутся после goji-node update --no-apply, затем bash $GOJI_SHARE/install.sh --resume --wait 0"; return 0 ;;
+    refresh) gup_off || gup_refresh 10 || true; return 0 ;;
+  esac
+  gjm_init
+  echo "Установлена версия: $VERSION"
+  if ! latest=$(gup_latest 10); then
+    echo "${GM_RED}Не удалось получить версию с GitHub (${GOJI_UPDATE_REPO:-$GOJI_REPO}). Проверьте доступ к raw.githubusercontent.com.${GM_R}" >&2
+    return 2
+  fi
+  mkdir -p "$GOJI_ETC" 2>/dev/null && echo "$(date +%s) $latest" > "$GOJI_ETC/update-check" || true
+  if ! gup_gt "$latest" "$VERSION"; then
+    echo "${GM_GRN}Версия актуальна${GM_R} (на GitHub: $latest)."
+    return 0
+  fi
+  echo "${GM_YEL}Доступна новая версия: $latest${GM_R}"
+  echo; echo "Что изменилось:"
+  gup_notes "$VERSION" || echo "  (не удалось загрузить CHANGELOG.md)"
+  echo
+  if [[ $mode == check ]]; then return 10; fi
+  if [[ $mode == notes ]]; then return 0; fi
+  if (( ! yes )); then
+    read -r -p "Скачать версию $latest? [Y/n] " r </dev/tty || return 0
+    [[ -z $r || $r == [YyДд]* ]] || { echo "Отменено."; return 0; }
+  fi
+  gup_install "$latest" "$apply" "$yes"
+}
+
 goji_menu() {
   local c
   while :; do
     gjm_banner "панель управления"
     echo
     gjm_status
+    gup_notice
     gjm_section "Проверка" 45
     gjm_item 1 "Полная проверка настроек" "всё сразу"
     gjm_item 2 "Установленные настройки" "с чем ставился сервер"
@@ -890,6 +1042,7 @@ goji_menu() {
     gjm_item 10 "Автопродление сертификата" "проверка certbot --dry-run"
     gjm_section "Обслуживание" 214
     gjm_item 12 "Найти и исправить ошибки" "автоматически" "$GM_GRN"
+    gjm_item 13 "Обновление установщика" "проверить и скачать новую версию"
     gjm_item 11 "Удалить компоненты установки" "с выбором" "$GM_RED"
     gjm_item 0 "Выход"
     echo
@@ -907,6 +1060,7 @@ goji_menu() {
       10) certbot renew --dry-run || true; gjm_pause ;;
       11) goji_uninstall; [[ -r $GOJI_ETC/install.conf ]] || return 0 ;;
       12) goji_fix || true; gjm_pause ;;
+      13) goji_update || true; gjm_pause ;;
       0|q|"") return 0 ;;
       *) echo "  Нет такого пункта." ;;
     esac
@@ -923,7 +1077,8 @@ goji_main() {
     ports)        goji_ports ;;
     profile)      goji_show_profile ;;
     decoy)        shift; goji_decoy "$@" ;;
-    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | fix [--dry-run] | settings | uninstall [--yes] [компонент...|all] | ports | profile | decoy [имя|random]" ;;
+    update)       shift; goji_update "$@" ;;
+    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | fix [--dry-run] | settings | uninstall [--yes] [компонент...|all] | ports | profile | decoy [имя|random] | update [--check|--notes|--yes|--no-apply|--off|--on]" ;;
     *)            echo "Неизвестная команда: $1 (goji-node --help)" >&2; return 1 ;;
   esac
 }
@@ -987,14 +1142,21 @@ while [[ $# -gt 0 ]]; do
     --no-upgrade-os) UPGRADE_MODE=0; shift ;;
     --ssh-keys-only)    KEYS_MODE=1; shift ;;
     --no-ssh-keys-only) KEYS_MODE=0; shift ;;
+    --update)       UPDATE=run; shift ;;
+    --check-update) UPDATE=check; shift ;;
+    --yes)          UPD_ARGS+=(--yes); shift ;;
+    --no-update-check) NO_UPD=1; shift ;;
     --resume|--check|--fix|--settings|--uninstall) shift ;;
-    -h|--help)   sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,23p' "$0"; exit 0 ;;
     -*)          die "неизвестный параметр: $1" ;;
     *)           DOMAIN="$1"; shift ;;
   esac
 done
 
 [[ $EUID -eq 0 ]] || die "запустите от root"
+if [[ $UPDATE == check ]]; then rc=0; goji_update --check || rc=$?; exit $rc; fi
+if [[ $UPDATE == run ]]; then rc=0; goji_update "${UPD_ARGS[@]}" || rc=$?; exit $rc; fi
+if [[ $NO_UPD -eq 1 ]]; then mkdir -p "$GOJI_ETC"; : > "$GOJI_ETC/no-update-check"; fi
 if [[ $CHECK -eq 1 ]]; then rc=0; goji_check || rc=$?; exit $rc; fi
 if [[ $FIX -eq 1 ]]; then
   # Простые исправления делаются сразу; если нужен повторный проход установки
@@ -1014,12 +1176,14 @@ if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
     gjm_banner "на сервере уже есть установка"
     echo
     gjm_status
+    gup_notice
     gjm_section "Что сделать?" 45
     gjm_item 1 "Проверить настройки сервера" "полная проверка"
     gjm_item 2 "Показать установленные настройки"
     gjm_item 3 "Меню goji-node" "проверки, профиль Remnawave, заглушка"
     gjm_item 4 "Найти и исправить ошибки" "автоматически" "$GM_GRN"
     gjm_item 5 "Переустановить / изменить установку" "вопросы заново"
+    gjm_item 7 "Обновление установщика" "проверить и скачать новую версию"
     gjm_item 6 "Удалить компоненты установки" "с выбором" "$GM_RED"
     gjm_item 0 "Выход"
     echo
@@ -1032,6 +1196,7 @@ if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
          if (( GJF_RESUME )); then RESUME=1; load_resume; info "Выполняю повторный проход установки (--resume)"; break; fi ;;
       5) break ;;
       6) goji_uninstall || true; [[ -r $CONF_FILE ]] || exit 0 ;;
+      7) goji_update || true ;;
       0|q|"") exit 0 ;;
       *) echo "  Нет такого пункта." ;;
     esac
@@ -2373,16 +2538,39 @@ install_check_command() {
   {
     echo '#!/usr/bin/env bash'
     echo 'export LC_ALL=C.UTF-8'
-    declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION
+    declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION GOJI_REPO GOJI_BRANCH
     declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
       gj_nodeport_public gj_nodeport_close gjc_nodeport gj_docker_public gj_ufw_allows gjc_docker goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
-      goji_tpl_choose goji_decoy goji_menu goji_main install_profile_file
+      goji_tpl_choose goji_decoy gup_get gup_gt gup_latest gup_off gup_refresh gup_cached gup_notice gup_notes gup_reject gup_install goji_update goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
   } > /usr/local/sbin/goji-node
   chmod 755 /usr/local/sbin/goji-node
   printf '#!/bin/sh\nexec /usr/local/sbin/goji-node check "$@"\n' > /usr/local/sbin/goji-node-check
   chmod 755 /usr/local/sbin/goji-node-check
+  install_update_notify
+}
+# Раз в сутки (cron) узнаёт версию на GitHub и кладёт её в /etc/goji-node/update-check; при входе root по SSH
+# /etc/profile.d/goji-update.sh читает этот файл (без сети) и сообщает о новой версии. Выключается: goji-node update --off.
+install_update_notify() {
+  if [[ -e $GOJI_ETC/no-update-check ]]; then
+    rm -f /etc/cron.d/goji-update-check /etc/profile.d/goji-update.sh; return 0
+  fi
+  printf '# goji-node: раз в сутки узнаёт версию установщика на GitHub\n%d %d * * * root /usr/local/sbin/goji-node update --refresh >/dev/null 2>&1\n' \
+    $((RANDOM % 60)) $((3 + RANDOM % 3)) > /etc/cron.d/goji-update-check
+  chmod 644 /etc/cron.d/goji-update-check
+  cat > /etc/profile.d/goji-update.sh <<'PROFEOF'
+# goji-node: сообщает о новой версии установщика (читает кэш, сеть не использует)
+if [ -t 1 ] && [ "$(id -u)" = 0 ] && [ -r /etc/goji-node/update-check ] && [ ! -e /etc/goji-node/no-update-check ]; then
+  read -r _gts _gv < /etc/goji-node/update-check
+  _gc=$(sed -n 's/^declare -- VERSION="\(.*\)"$/\1/p' /usr/local/sbin/goji-node 2>/dev/null | head -n 1)
+  if [ -n "$_gv" ] && [ -n "$_gc" ] && [ "$_gv" != "$_gc" ] && [ "$(printf '%s\n%s\n' "$_gv" "$_gc" | sort -V | tail -n 1)" = "$_gv" ]; then
+    echo "goji-node: доступна новая версия установщика $_gv (установлена $_gc). Обновить: goji-node update"
+  fi
+  unset _gts _gv _gc
+fi
+PROFEOF
+  chmod 644 /etc/profile.d/goji-update.sh
 }
 
 if [[ $HARDEN -eq 1 ]]; then
