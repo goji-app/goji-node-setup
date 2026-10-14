@@ -13,7 +13,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/mai
 Первым вопросом покажет меню выбора сайта-заглушки, затем спросит домен, SECRET_KEY ноды, NODE_PORT, IP панели и e-mail. Все сообщения на русском.
 Всё можно передать флагами: `install.sh <домен> --secret-key ... --node-port 2222 --panel-ip ... --email ... --template blog`
 
-Заглушка выбирается в меню (на терминале) или флагом `--template <имя>`; без терминала и без флага — случайная. Доступны: analytics, blog, docs, saas, freelancer, resume, creative, grayscale, new-age, agency, livecams. При повторном запуске выбранная заглушка сохраняется. Сменить позже: `goji-node decoy` (меню) или `goji-node decoy <имя|random>`; шаблоны хранятся в `/usr/share/goji-node/templates`. Источники и лицензии: `templates/README.md`. После правок в `templates/` — `python build.py`.
+Заглушка выбирается в меню (на терминале) или флагом `--template <имя>`; без терминала и без флага — случайная. Доступны: analytics, blog, docs, saas, freelancer, resume, creative, grayscale, new-age, agency, livecams. При повторном запуске выбранная заглушка сохраняется. Сменить позже: `goji-node decoy` (меню) или `goji-node decoy <имя|random>`; шаблоны хранятся в `/usr/share/goji-node/templates`. Описание и лицензии фото: `templates/README.md`, `templates/THIRD-PARTY-NOTICES.md`. После правок в `templates/` — `python build.py`.
 
 Перед запуском: A-запись домена указывает на этот VPS, нода добавлена в панели.
 

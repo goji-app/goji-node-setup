@@ -4,6 +4,8 @@
 
 > One command to turn a fresh Debian/Ubuntu VPS into a Remnawave node behind nginx + Let's Encrypt, with an XHTTP Xray profile and a static site on every other path.
 
+**Текущая версия: 1.3.8** — все сайты-заглушки переписаны с реальными фото. Полная история: [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Быстрый старт
@@ -137,17 +139,17 @@ flowchart LR
 
 | Имя | Что это | Источник и лицензия |
 |---|---|---|
-| `analytics` | лендинг вымышленного сервиса аналитики | написан для этого репозитория |
-| `blog` | простой блог | [westtle/simple-blog-template](https://github.com/westtle/simple-blog-template), MIT |
-| `docs` | одностраничный сайт документации | [JMcrafter26/tiny-docs](https://github.com/JMcrafter26/tiny-docs), MIT |
-| `saas` | лендинг SaaS-продукта | [hannah-wright/saas-landing-page-template](https://github.com/hannah-wright/saas-landing-page-template), MIT |
-| `freelancer` | портфолио фрилансера с галереей работ | [StartBootstrap/startbootstrap-freelancer](https://github.com/StartBootstrap/startbootstrap-freelancer), MIT |
-| `resume` | страница-резюме разработчика | [StartBootstrap/startbootstrap-resume](https://github.com/StartBootstrap/startbootstrap-resume), MIT |
-| `creative` | яркий лендинг креативной студии | [StartBootstrap/startbootstrap-creative](https://github.com/StartBootstrap/startbootstrap-creative), MIT |
-| `grayscale` | тёмный минималистичный лендинг | [StartBootstrap/startbootstrap-grayscale](https://github.com/StartBootstrap/startbootstrap-grayscale), MIT |
-| `new-age` | лендинг мобильного приложения | [StartBootstrap/startbootstrap-new-age](https://github.com/StartBootstrap/startbootstrap-new-age), MIT |
-| `agency` | корпоративный сайт агентства: услуги, команда, портфолио | [StartBootstrap/startbootstrap-agency](https://github.com/StartBootstrap/startbootstrap-agency), MIT |
-| `livecams` | сайт онлайн-трансляций (МКС, NASA, зоопарки, океан, живая природа, города): плеер открывается на самой странице, YouTube-встройки грузятся по клику | написан для этого репозитория |
+| `analytics` | Quillmetric — сервис веб-аналитики: график, источники, тарифы | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `blog` | Lantern & Road — тревел-блог: 6 статей с фото, страница «О блоге» | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `docs` | Postline — документация API: боковое меню, поиск, примеры кода | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `saas` | Stackpulse — лендинг сервиса мониторинга: панель, тарифы, отзывы | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `freelancer` | Maren Holt — портфолио фотографа: 12 фото, лайтбокс | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `resume` | Daniel Okafor — резюме backend-разработчика | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `creative` | Oak & Ledger — магазин изделий ручной работы с корзиной | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `grayscale` | Fjellro — горные домики в Норвегии, запрос брони | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `new-age` | Habitual — лендинг приложения-трекера привычек | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `agency` | Fieldstone — студия брендинга и веб-дизайна: услуги, работы, команда | написан для этого репозитория; фото: [THIRD-PARTY-NOTICES](xhttp-tls/templates/THIRD-PARTY-NOTICES.md) (MIT) |
+| `livecams` | сайт «Open Window» с онлайн-трансляциями (города, МКС, зоопарк, аквариумы, дикая природа): плеер на странице, превью и видео подгружаются с YouTube, плеер — по клику | написан для этого репозитория |
 
 Заглушку можно выбрать в меню при установке или флагом `--template`; без терминала выбирается случайная. При повторном запуске сохраняется выбранный шаблон, сменить его позже: `goji-node decoy` (меню) или `goji-node decoy <имя>`. Шаблоны Start Bootstrap взяты из `dist/` репозиториев, изображения пересжаты, рекламные тексты и ссылки на сайт-источник заменены, скрипт стороннего сервиса форм удалён. Часть шаблонов подгружает Bootstrap-скрипт, шрифты и иконки с публичных CDN (jsDelivr, Google Fonts, Font Awesome), как и оригиналы. Лицензии сторонних шаблонов лежат рядом с ними и отдаются как `LICENSE.txt`.
 
@@ -158,11 +160,12 @@ flowchart LR
 ## Состав репозитория
 
 ```
+CHANGELOG.md              история версий
 xhttp-tls/
 ├── install.sh            готовый установщик (шаблоны встроены, один файл)
 ├── install.template.sh   исходник установщика
 ├── build.py              встраивает templates/ в install.template.sh -> install.sh
-├── templates/            сайты-заглушки
+├── templates/            сайты-заглушки (+ THIRD-PARTY-NOTICES.md)
 ├── nginx-template.conf   эталон конфига nginx, который собирает скрипт
 ├── xray-node-profile.json  универсальный профиль Xray для Remnawave
 └── INSTALL.md            краткая памятка

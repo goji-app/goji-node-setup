@@ -3,74 +3,71 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Open Window — live cams: space, zoos, oceans and cities</title>
-  <meta name="description" content="Watch live streams in one place: the International Space Station, zoos and aquariums, oceans, wildlife and cities around the world.">
+  <title>Open Window — live cameras from around the world</title>
+  <meta name="description" content="Live streams from city squares, zoos, aquariums, wildlife reserves and the International Space Station, all in one place.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>
-    :root { --bg:#0b1119; --bg2:#111a25; --card:#141f2c; --line:#223245; --fg:#e8eff6; --muted:#8ea3b6; --accent:#5cc8ff; --live:#ff4d4f; }
-    :root[data-theme="light"] { --bg:#f3f6f9; --bg2:#fff; --card:#fff; --line:#d9e2ea; --fg:#14232f; --muted:#587083; --accent:#0f6aa8; }
+    :root { --bg:#0e1116; --panel:#151a21; --line:#242c36; --fg:#eef2f6; --muted:#98a4b3; --accent:#e8eef5; --live:#e5484d; }
+    :root[data-theme="light"] { --bg:#f5f6f8; --panel:#fff; --line:#dfe3e8; --fg:#12171d; --muted:#5d6874; --accent:#12171d; }
     * { box-sizing:border-box; }
-    html { scroll-behavior:smooth; }
-    body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
-    a { color:var(--accent); text-decoration:none; }
+    body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
+    a { color:inherit; text-decoration:none; }
     button { font:inherit; color:inherit; }
-    .wrap { max-width:1240px; margin:0 auto; padding:0 20px; }
-    header { position:sticky; top:0; z-index:5; background:color-mix(in srgb,var(--bg) 92%,transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--line); }
-    header .wrap { display:flex; align-items:center; gap:18px; height:62px; }
-    .logo { display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px; color:var(--fg); white-space:nowrap; }
-    .logo i { width:22px; height:22px; border-radius:50%; border:3px solid var(--accent); position:relative; }
-    .logo i::after { content:""; position:absolute; inset:4px; border-radius:50%; background:var(--live); animation:pulse 2s infinite; }
-    @keyframes pulse { 50% { opacity:.35; } }
-    .search { flex:1; max-width:420px; margin-left:auto; }
-    .search input { width:100%; padding:8px 14px; border-radius:999px; border:1px solid var(--line); background:var(--bg2); color:var(--fg); font:inherit; font-size:14px; }
-    .search input:focus { outline:2px solid var(--accent); outline-offset:1px; }
-    .theme { border:1px solid var(--line); background:var(--bg2); border-radius:999px; padding:6px 12px; cursor:pointer; font-size:13px; }
-    .stage { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:22px; padding:24px 0 8px; }
-    @media (max-width:960px) { .stage { grid-template-columns:1fr; } }
-    .player { background:#000; border-radius:14px; overflow:hidden; position:relative; aspect-ratio:16/9; border:1px solid var(--line); }
+    .wrap { max-width:1280px; margin:0 auto; padding:0 24px; }
+    header { border-bottom:1px solid var(--line); background:var(--bg); position:sticky; top:0; z-index:5; }
+    header .wrap { display:flex; align-items:center; gap:28px; height:58px; }
+    .logo { font-weight:700; letter-spacing:-.01em; font-size:18px; display:flex; align-items:center; gap:9px; }
+    .logo i { width:9px; height:9px; border-radius:50%; background:var(--live); display:inline-block; }
+    nav { display:flex; gap:20px; }
+    nav button { background:none; border:0; padding:6px 0; color:var(--muted); cursor:pointer; font-size:14px; border-bottom:2px solid transparent; }
+    nav button:hover { color:var(--fg); }
+    nav button[aria-pressed="true"] { color:var(--fg); border-bottom-color:var(--fg); }
+    .search { margin-left:auto; }
+    .search input { width:230px; padding:7px 12px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--fg); font:inherit; font-size:14px; }
+    .search input:focus { outline:1px solid var(--muted); }
+    @media (max-width:760px) { nav { display:none; } .search { flex:1; } .search input { width:100%; } }
+    .stage { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:28px; padding:26px 0 10px; }
+    @media (max-width:1000px) { .stage { grid-template-columns:1fr; } }
+    .player { position:relative; aspect-ratio:16/9; background:#000; border-radius:8px; overflow:hidden; }
     .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
-    .poster { position:absolute; inset:0; display:block; width:100%; height:100%; border:0; padding:0; cursor:pointer; background:none; }
-    .poster svg { width:100%; height:100%; display:block; }
-    .poster .big { position:absolute; left:50%; top:50%; width:84px; height:84px; margin:-42px 0 0 -42px; border-radius:50%; background:rgba(0,0,0,.55); border:2px solid rgba(255,255,255,.8); display:grid; place-items:center; transition:transform .15s; }
-    .poster:hover .big { transform:scale(1.08); }
-    .poster .big::after { content:""; margin-left:6px; border-left:26px solid #fff; border-top:16px solid transparent; border-bottom:16px solid transparent; }
-    .meta { padding:16px 2px 4px; }
-    .meta .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-    .meta h1 { margin:0; font-size:24px; line-height:1.25; }
-    .badge { background:var(--live); color:#fff; font-size:11px; font-weight:700; letter-spacing:.08em; padding:2px 8px; border-radius:4px; }
-    .cat { color:var(--muted); font-size:14px; }
-    .meta p { color:var(--muted); margin:8px 0 12px; max-width:760px; }
-    .actions { display:flex; gap:10px; flex-wrap:wrap; }
-    .btn { border:1px solid var(--line); background:var(--bg2); border-radius:8px; padding:7px 14px; cursor:pointer; font-size:14px; }
-    .btn:hover { border-color:var(--accent); }
-    aside h2 { font-size:15px; margin:0 0 10px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.06em; }
-    .next { display:flex; flex-direction:column; gap:10px; max-height:calc(((100vw - 40px) * 9 / 16)); }
-    @media (min-width:961px) { .next { max-height:600px; overflow:auto; padding-right:4px; } }
-    .item { display:flex; gap:12px; border:1px solid transparent; background:none; text-align:left; border-radius:10px; padding:6px; cursor:pointer; }
-    .item:hover, .item[aria-current="true"] { background:var(--card); border-color:var(--line); }
-    .item .th { flex:0 0 120px; aspect-ratio:16/9; border-radius:6px; overflow:hidden; position:relative; }
-    .item .th svg { width:100%; height:100%; display:block; }
-    .item .th .badge { position:absolute; left:4px; top:4px; font-size:9px; padding:1px 5px; }
-    .item b { display:block; font-size:14px; line-height:1.3; }
-    .item span { color:var(--muted); font-size:12px; }
-    .chips { display:flex; gap:8px; flex-wrap:wrap; margin:26px 0 18px; }
-    .chips button { border:1px solid var(--line); background:var(--bg2); border-radius:999px; padding:6px 15px; font-size:14px; cursor:pointer; }
-    .chips button[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:#04141f; font-weight:600; }
-    .chips small { opacity:.7; margin-left:4px; }
-    h2.sec { font-size:20px; margin:0 0 14px; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:18px; padding-bottom:40px; }
-    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; cursor:pointer; text-align:left; padding:0; display:block; width:100%; }
-    .card:hover { border-color:var(--accent); }
-    .card .th { aspect-ratio:16/9; position:relative; }
-    .card .th svg { width:100%; height:100%; display:block; }
-    .card .th .badge { position:absolute; left:8px; top:8px; }
-    .card .bd { padding:11px 13px 13px; }
-    .card b { display:block; font-size:15px; line-height:1.3; }
-    .card span { color:var(--muted); font-size:13px; }
-    .empty { color:var(--muted); padding:30px 0 50px; }
-    footer { border-top:1px solid var(--line); padding:24px 0 34px; color:var(--muted); font-size:14px; }
-    footer .wrap { display:flex; gap:20px; flex-wrap:wrap; justify-content:space-between; }
-    footer p { margin:0; max-width:720px; }
+    .poster { position:absolute; inset:0; width:100%; height:100%; padding:0; border:0; cursor:pointer; background:#000 center/cover no-repeat; }
+    .poster::after { content:""; position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.55),rgba(0,0,0,0) 45%); }
+    .poster .pl { position:absolute; z-index:1; left:50%; top:50%; width:72px; height:72px; margin:-36px 0 0 -36px; border-radius:50%; background:rgba(14,17,22,.62); border:1.5px solid rgba(255,255,255,.85); }
+    .poster .pl::after { content:""; position:absolute; left:28px; top:22px; border-left:21px solid #fff; border-top:13px solid transparent; border-bottom:13px solid transparent; }
+    .poster:hover .pl { background:rgba(14,17,22,.8); }
+    .info { padding:16px 0 4px; }
+    .info .k { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:13px; }
+    .tag { display:inline-flex; align-items:center; gap:6px; background:var(--live); color:#fff; font-size:11px; font-weight:700; letter-spacing:.07em; padding:2px 7px; border-radius:3px; }
+    .info h1 { margin:8px 0 6px; font-size:26px; line-height:1.2; letter-spacing:-.015em; }
+    .info p { margin:0 0 14px; color:var(--muted); max-width:720px; }
+    .btns { display:flex; gap:8px; flex-wrap:wrap; }
+    .btn { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 14px; cursor:pointer; font-size:13px; }
+    .btn:hover { border-color:var(--muted); }
+    aside h2 { margin:0 0 12px; font-size:12px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); font-weight:600; }
+    .next { display:flex; flex-direction:column; gap:12px; }
+    @media (min-width:1001px) { .next { max-height:620px; overflow:auto; padding-right:6px; } }
+    .row { display:flex; gap:12px; background:none; border:0; padding:0; text-align:left; cursor:pointer; }
+    .row .th { flex:0 0 150px; aspect-ratio:16/9; border-radius:5px; overflow:hidden; position:relative; background:#1b222b center/cover no-repeat; }
+    .row .th .tag { position:absolute; left:5px; top:5px; font-size:9px; padding:1px 5px; }
+    .row b { display:block; font-size:14px; line-height:1.3; font-weight:600; }
+    .row small { color:var(--muted); font-size:12px; }
+    .row:hover b { text-decoration:underline; }
+    .row[aria-current="true"] b { color:var(--live); }
+    .bar { display:flex; align-items:baseline; justify-content:space-between; margin:30px 0 14px; border-top:1px solid var(--line); padding-top:22px; }
+    .bar h2 { margin:0; font-size:20px; letter-spacing:-.01em; }
+    .bar span { color:var(--muted); font-size:13px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:24px 20px; padding-bottom:48px; }
+    .card { background:none; border:0; padding:0; text-align:left; cursor:pointer; display:block; width:100%; }
+    .card .th { aspect-ratio:16/9; border-radius:8px; overflow:hidden; position:relative; background:#1b222b center/cover no-repeat; }
+    .card .th .tag { position:absolute; left:9px; top:9px; }
+    .card .th::after { content:""; position:absolute; inset:0; box-shadow:inset 0 0 0 1px rgba(255,255,255,.06); border-radius:8px; }
+    .card:hover .th { filter:brightness(1.08); }
+    .card b { display:block; margin-top:10px; font-size:15px; line-height:1.3; font-weight:600; }
+    .card small { color:var(--muted); font-size:13px; }
+    .empty { color:var(--muted); padding:20px 0 60px; }
+    footer { border-top:1px solid var(--line); padding:26px 0 40px; color:var(--muted); font-size:13px; }
+    footer .wrap { display:flex; justify-content:space-between; gap:24px; flex-wrap:wrap; }
+    footer p { margin:0; max-width:760px; }
     [hidden] { display:none !important; }
   </style>
 </head>
@@ -78,8 +75,8 @@
   <header>
     <div class="wrap">
       <a class="logo" href="/"><i></i>Open Window</a>
-      <label class="search"><input id="q" type="search" placeholder="Search streams…" aria-label="Search streams" autocomplete="off"></label>
-      <button class="theme" id="theme" type="button" aria-label="Switch theme">Theme</button>
+      <nav id="nav" aria-label="Categories"></nav>
+      <label class="search"><input id="q" type="search" placeholder="Search" aria-label="Search" autocomplete="off"></label>
     </div>
   </header>
 
@@ -87,12 +84,12 @@
     <section class="stage">
       <div>
         <div class="player" id="player"></div>
-        <div class="meta">
-          <div class="row"><span class="badge">LIVE</span><span class="cat" id="m-cat"></span></div>
+        <div class="info">
+          <div class="k"><span class="tag">LIVE</span><span id="m-cat"></span><span>·</span><span id="m-src"></span></div>
           <h1 id="m-title"></h1>
           <p id="m-desc"></p>
-          <div class="actions">
-            <button class="btn" id="fs" type="button">Fullscreen</button>
+          <div class="btns">
+            <button class="btn" id="fs" type="button">Full screen</button>
             <button class="btn" id="share" type="button">Copy link</button>
           </div>
         </div>
@@ -103,113 +100,104 @@
       </aside>
     </section>
 
-    <div class="chips" id="chips" role="group" aria-label="Categories"></div>
-    <h2 class="sec" id="sec">All streams</h2>
+    <div class="bar"><h2 id="sec">All cameras</h2><span id="cnt"></span></div>
     <section class="grid" id="grid"></section>
-    <div class="empty" id="empty" hidden>No streams match your search.</div>
+    <div class="empty" id="empty" hidden>Nothing found.</div>
   </main>
 
   <footer>
     <div class="wrap">
-      <p>Open Window brings public live broadcasts together in one place. Streams are provided by their respective operators; availability and schedules depend on the source.</p>
+      <p>Open Window collects public live broadcasts in one place. Every stream belongs to the channel credited next to it; availability and schedules are set by the broadcaster, and a camera may be offline at times.</p>
       <span>© <span id="y">2026</span> Open Window</span>
     </div>
   </footer>
 
   <script>
   (function () {
-    // Stream sources: c = YouTube channel (its current live broadcast), v = video id, p = playlist id.
+    // v = YouTube video id of the broadcast. Every id below was checked as embeddable on YouTube.
     var S = [
-      { id:'iss',      cat:'space',   t:'International Space Station — live views', d:'Live video from cameras on the International Space Station, as published by NASA. Availability depends on the broadcast.', p:'PL2aBZuCeDwlQMf6xMgQAUAY_nbHAgW5jz' },
-      { id:'nasa',     cat:'space',   t:'NASA — live broadcast', d:'NASA’s current live broadcast: launches, spacewalks, mission coverage and briefings when they are on air.', c:'UCLA_DiR1FfKNvjuUpBHmylQ' },
-      { id:'sdzoo',    cat:'zoo',     t:'San Diego Zoo — live animal cam', d:'Live view of animals at the San Diego Zoo Wildlife Alliance.', c:'UCC5NfQ6Mf0dq_eEwv4P_hWA' },
-      { id:'monterey', cat:'ocean',    t:'Monterey Bay Aquarium — live cam', d:'Live view from the Monterey Bay Aquarium: sea life from the California coast.', c:'UCnM5iMGiKsZg-iOlIO2ZkdQ' },
-      { id:'africa',   cat:'nature',  t:'African wildlife — live', d:'Live view of African wildlife from Explore.org partner cameras.', c:'UCiGOIXjFqy5_mUNxQNOMfHw' },
-      { id:'oceans',   cat:'ocean',   t:'Oceans — live underwater cam', d:'Live underwater and coastal cameras from Explore.org.', c:'UCSyg9cb3Iq-NtlbxqNB9wGw' },
-      { id:'nature',   cat:'nature',  t:'Live nature cams', d:'A rotating selection of live nature and wildlife cameras from Explore.org.', c:'UC-2KSeUU5SMCX6XLRD-AEvw' },
-      { id:'bears',    cat:'nature',  t:'Bears — live', d:'Live bear cams from Explore.org: rivers, forests and coastline.', c:'UC2Sk0aXLq3ADkH_USGPKT_Q' },
-      { id:'eagles',   cat:'nature',  t:'Eagles and birds — live', d:'Live nest and bird cameras from Explore.org.', c:'UC8NnosPOvXnm0O1u5YnLQiw' },
-      { id:'earthcam', cat:'city',    t:'EarthCam — cities around the world', d:'Live city and landmark cameras from the EarthCam network.', c:'UC6qrG3W8SMK0jior2olka3g' },
-      { id:'skyline',  cat:'city',    t:'SkylineWebcams — live cities', d:'Live city views, squares and coastlines from the SkylineWebcams network.', c:'UC2WMV4vCYurHdHPd9pCqYSg' }
+      { id:'iss',        cat:'space',    v:'M3HKLzjvKPc', t:'International Space Station — live from orbit', by:'NASA',
+        d:'Live video from cameras on the International Space Station, the official NASA stream.' },
+      { id:'times-sq',   cat:'city',     v:'VGnFLdQW39A', t:'New York — Times Square and the skyline', by:'FOX 5 New York',
+        d:'A 24/7 live camera over Times Square, the Manhattan skyline and the streets around them.' },
+      { id:'crossroads', cat:'city',     v:'z-jYdOIKcTQ', t:'Times Square Crossroads — New York City', by:'EarthCam',
+        d:'EarthCam’s live view of the Times Square crossroads in New York City.' },
+      { id:'venice',     cat:'city',     v:'a1mcaV3Sf9U', t:'Venice — rolling live cam', by:'I Love You Venice',
+        d:'A rolling live cam on Venice, Italy: the lagoon, canals and rooftops.' },
+      { id:'shibuya',    cat:'city',     v:'dfVK7ld38Ys', t:'Tokyo — Shibuya Scramble Crossing', by:'FNN Prime Online',
+        d:'The famous Shibuya Scramble Crossing in Tokyo, live.' },
+      { id:'shibuya-2',  cat:'city',     v:'2TrGSO2ZQ_Q', t:'Tokyo — Shibuya Scramble Crossing, second view', by:'Shibuya Television',
+        d:'A second live angle on the Shibuya Scramble Crossing in Tokyo.' },
+      { id:'stl-zoo',    cat:'zoo',      v:'b8RCVeXUYMY', t:'Saint Louis Zoo — live stream', by:'Saint Louis Zoo',
+        d:'The Saint Louis Zoo’s own live stream from the zoo grounds.' },
+      { id:'africa',     cat:'wildlife', v:'vr4o_AsrU1k', t:'African waterholes — Wild Africa Live', by:'Africam',
+        d:'Live cameras at African waterholes: wild animals come and go through the day.' },
+      { id:'elephants',  cat:'wildlife', v:'0P_LBKqVbfs', t:'Elephants — Tembe Elephant Park, South Africa', by:'Explore Live Nature Cams',
+        d:'A live elephant cam in Tembe Elephant Park, South Africa.' },
+      { id:'jelly-pac',  cat:'aquarium', v:'IYG9fnz40-E', t:'Jellyfish — Aquarium of the Pacific', by:'explore.org',
+        d:'Moon jellies drifting in the tank at the Aquarium of the Pacific, live.' },
+      { id:'sharks',     cat:'aquarium', v:'o41HD4IiWoA', t:'Sharks and friends — aquarium cams', by:'EarthCam',
+        d:'EarthCam’s live view of sharks and other fish in a large aquarium.' }
     ];
-    var CATS = [['all','All'],['space','Space'],['zoo','Zoos'],['nature','Wildlife'],['ocean','Oceans & aquariums'],['city','Cities']];
-    var LABEL = { space:'Space', zoo:'Zoos', nature:'Wildlife', ocean:'Oceans & aquariums', city:'Cities' };
-    var PAL = { space:['#060b24','#3b2a7a','#8fd0ff'], zoo:['#1d4b2b','#4f9a5a','#e5f5c8'], nature:['#3b2a16','#c4742b','#ffd9a0'], ocean:['#04203a','#0e6aa0','#7fe0ff'], city:['#14143a','#7b3d86','#ffb36b'] };
+    var CATS = [['all','All'],['city','Cities'],['space','Space'],['zoo','Zoos'],['wildlife','Wildlife'],['aquarium','Aquariums']];
+    var LABEL = { city:'City', space:'Space', zoo:'Zoo', wildlife:'Wildlife', aquarium:'Aquarium' };
     var $ = function (id) { return document.getElementById(id); };
-
-    function art(cat, k) {
-      var p = PAL[cat], g = 'g' + cat + k, ic = '';
-      if (cat === 'space') ic = '<circle cx="118" cy="62" r="34" fill="#2e7fd6"/><path d="M90 54q20 8 34 0t26 8v10q-22-8-34 2t-26-4z" fill="#58b36a" opacity=".8"/><g fill="#fff"><circle cx="20" cy="14" r="1.3"/><circle cx="48" cy="30" r="1"/><circle cx="76" cy="12" r="1.2"/><circle cx="30" cy="58" r="1"/></g><path d="M20 80h46M32 74v12M54 74v12" stroke="#cfd8e3" stroke-width="2.2"/><rect x="40" y="76" width="12" height="8" fill="#e6edf5"/>';
-      if (cat === 'zoo') ic = '<g stroke="#2f6a3a" stroke-width="3"><path d="M120 0v90M138 0v90"/></g><ellipse cx="72" cy="60" rx="26" ry="20" fill="#fff"/><circle cx="72" cy="36" r="15" fill="#fff"/><circle cx="61" cy="25" r="5" fill="#222"/><circle cx="83" cy="25" r="5" fill="#222"/><ellipse cx="66" cy="36" rx="3.5" ry="5" fill="#222"/><ellipse cx="78" cy="36" rx="3.5" ry="5" fill="#222"/>';
-      if (cat === 'nature') ic = '<path d="M0 72h160v18H0z" fill="#3a2414"/><path d="M104 72V38q0-7 7-7t7 7q16 0 16 11-16 0-16 12v11z" fill="#1d1109"/><circle cx="38" cy="26" r="13" fill="#ffe3a3"/>';
-      if (cat === 'ocean') ic = '<path d="M0 54q20-10 40 0t40 0 40 0 40 0v36H0z" fill="#0a4f7c"/><path d="M0 68q20-10 40 0t40 0 40 0 40 0v22H0z" fill="#06385c"/><path d="M60 44q14-12 30 0-14 10-30 0z" fill="#ffd36b"/><circle cx="86" cy="43" r="1.6" fill="#222"/>';
-      if (cat === 'city') ic = '<g fill="#12122c"><rect x="8" y="42" width="26" height="48"/><rect x="38" y="26" width="24" height="64"/><rect x="66" y="48" width="28" height="42"/><rect x="98" y="32" width="22" height="58"/><rect x="124" y="50" width="30" height="40"/></g><g fill="#ffd76a"><rect x="14" y="50" width="4" height="4"/><rect x="44" y="36" width="4" height="4"/><rect x="52" y="52" width="4" height="4"/><rect x="74" y="58" width="4" height="4"/><rect x="104" y="42" width="4" height="4"/><rect x="132" y="60" width="4" height="4"/></g>';
-      return '<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><linearGradient id="' + g + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + p[0] + '"/><stop offset=".6" stop-color="' + p[1] + '"/><stop offset="1" stop-color="' + p[2] + '"/></linearGradient></defs><rect width="160" height="90" fill="url(#' + g + ')"/>' + ic + '</svg>';
-    }
-    function src(s) {
-      var h = 'https://www.youtube-nocookie.com/embed/';
-      if (s.c) return h + 'live_stream?channel=' + s.c + '&autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1';
-      if (s.v) return h + s.v + '?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1';
-      return h + 'videoseries?list=' + s.p + '&autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1';
-    }
+    var thumb = function (s) { return 'https://i.ytimg.com/vi/' + s.v + '/hqdefault.jpg'; };
     function find(id) { for (var i = 0; i < S.length; i++) if (S[i].id === id) return S[i]; return S[0]; }
+    function img(el, s) { el.style.backgroundImage = 'url(' + thumb(s) + ')'; }
 
     var cur = null, filter = 'all', query = '';
     function show(id, play, push) {
       var s = find(id); cur = s;
-      $('m-title').textContent = s.t; $('m-desc').textContent = s.d; $('m-cat').textContent = LABEL[s.cat];
+      $('m-title').textContent = s.t; $('m-desc').textContent = s.d; $('m-cat').textContent = LABEL[s.cat]; $('m-src').textContent = s.by;
       document.title = s.t + ' — Open Window';
       var box = $('player'); box.innerHTML = '';
       if (play) {
         var f = document.createElement('iframe');
-        f.src = src(s); f.title = s.t;
-        f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+        f.src = 'https://www.youtube-nocookie.com/embed/' + s.v + '?autoplay=1&mute=1&rel=0&playsinline=1';
+        f.title = s.t; f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
         f.setAttribute('allowfullscreen', ''); f.referrerPolicy = 'strict-origin-when-cross-origin';
         box.appendChild(f);
       } else {
-        var b = document.createElement('button'); b.className = 'poster'; b.type = 'button'; b.setAttribute('aria-label', 'Play ' + s.t);
-        b.innerHTML = art(s.cat, 'p') + '<span class="big"></span>';
+        var b = document.createElement('button'); b.className = 'poster'; b.type = 'button'; b.setAttribute('aria-label', 'Play: ' + s.t);
+        img(b, s); b.innerHTML = '<span class="pl"></span>';
         b.addEventListener('click', function () { show(s.id, true, false); });
         box.appendChild(b);
       }
       if (push) { try { history.replaceState(null, '', '#' + s.id); } catch (e) {} }
       renderNext();
     }
-    function item(s, cls) {
+    function mk(s, cls) {
       var b = document.createElement('button'); b.type = 'button'; b.className = cls;
-      b.innerHTML = (cls === 'card'
-        ? '<div class="th">' + art(s.cat, 'c' + s.id) + '<span class="badge">LIVE</span></div><div class="bd"><b></b><span></span></div>'
-        : '<div class="th">' + art(s.cat, 'n' + s.id) + '<span class="badge">LIVE</span></div><div><b></b><span></span></div>');
-      b.querySelector('b').textContent = s.t; b.querySelector('span:not(.badge)').textContent = LABEL[s.cat];
+      b.innerHTML = '<div class="th"><span class="tag">LIVE</span></div><div><b></b><small></small></div>';
+      img(b.querySelector('.th'), s);
+      b.querySelector('b').textContent = s.t; b.querySelector('small').textContent = s.by + ' · ' + LABEL[s.cat];
       b.addEventListener('click', function () { show(s.id, true, true); window.scrollTo({ top: 0, behavior: 'smooth' }); });
-      if (cls === 'item' && cur && cur.id === s.id) b.setAttribute('aria-current', 'true');
+      if (cls === 'row' && cur && cur.id === s.id) b.setAttribute('aria-current', 'true');
       return b;
     }
     function renderNext() {
       var n = $('next'); n.innerHTML = '';
-      S.forEach(function (s) { if (!cur || s.id !== cur.id) n.appendChild(item(s, 'item')); });
+      S.forEach(function (s) { if (!cur || s.id !== cur.id) n.appendChild(mk(s, 'row')); });
     }
     function renderGrid() {
       var g = $('grid'); g.innerHTML = ''; var q = query.toLowerCase(), c = 0;
       S.forEach(function (s) {
         if (filter !== 'all' && s.cat !== filter) return;
-        if (q && (s.t + ' ' + s.d + ' ' + LABEL[s.cat]).toLowerCase().indexOf(q) < 0) return;
-        g.appendChild(item(s, 'card')); c++;
+        if (q && (s.t + ' ' + s.d + ' ' + s.by + ' ' + LABEL[s.cat]).toLowerCase().indexOf(q) < 0) return;
+        g.appendChild(mk(s, 'card')); c++;
       });
-      $('empty').hidden = c > 0;
-      $('sec').textContent = filter === 'all' ? 'All streams' : LABEL[filter];
+      $('empty').hidden = c > 0; $('cnt').textContent = c + (c === 1 ? ' camera' : ' cameras');
+      $('sec').textContent = filter === 'all' ? 'All cameras' : CATS.filter(function (x) { return x[0] === filter; })[0][1];
     }
-    function renderChips() {
-      var w = $('chips'); w.innerHTML = '';
+    function renderNav() {
+      var w = $('nav'); w.innerHTML = '';
       CATS.forEach(function (c) {
-        var n = c[0] === 'all' ? S.length : S.filter(function (s) { return s.cat === c[0]; }).length;
-        var b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-pressed', filter === c[0] ? 'true' : 'false');
-        b.innerHTML = c[1] + '<small>' + n + '</small>';
-        b.addEventListener('click', function () { filter = c[0]; renderChips(); renderGrid(); });
+        var b = document.createElement('button'); b.type = 'button'; b.textContent = c[1]; b.setAttribute('aria-pressed', filter === c[0] ? 'true' : 'false');
+        b.addEventListener('click', function () { filter = c[0]; renderNav(); renderGrid(); });
         w.appendChild(b);
       });
     }
-
     $('q').addEventListener('input', function (e) { query = e.target.value; renderGrid(); });
     $('fs').addEventListener('click', function () { var p = $('player'); if (p.requestFullscreen) p.requestFullscreen().catch(function () {}); });
     $('share').addEventListener('click', function () {
@@ -217,14 +205,9 @@
       var done = function () { b.textContent = 'Link copied'; setTimeout(function () { b.textContent = 'Copy link'; }, 1800); };
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(u).then(done, function () {}); else done();
     });
-    $('theme').addEventListener('click', function () {
-      var r = document.documentElement, l = r.getAttribute('data-theme') !== 'light';
-      if (l) r.setAttribute('data-theme', 'light'); else r.removeAttribute('data-theme');
-    });
     $('y').textContent = new Date().getFullYear();
     window.addEventListener('hashchange', function () { var h = location.hash.slice(1); if (h) show(h, true, false); });
-
-    renderChips(); renderGrid();
+    renderNav(); renderGrid();
     var h = location.hash.slice(1);
     show(h || 'iss', !!h, false);
   })();
