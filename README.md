@@ -4,7 +4,7 @@
 
 > One command to turn a fresh Debian/Ubuntu VPS into a Remnawave node behind nginx + Let's Encrypt, with an XHTTP Xray profile and a static site on every other path.
 
-**Текущая версия: 1.4.0** — скрипт сам сообщает о новой версии и умеет обновляться (`goji-node update`). Полная история: [CHANGELOG.md](CHANGELOG.md).
+**Текущая версия: 1.5.0** — заглушку можно заменить без переустановки (`goji-node decoy`), в том числе своим сайтом; скрипт сам сообщает о новой версии (`goji-node update`). Полная история: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -158,6 +158,19 @@ flowchart LR
 Свой шаблон: положите папку в `xhttp-tls/templates/<имя>/` и выполните `python xhttp-tls/build.py`. Он заново встроит шаблоны в `install.sh`, чтобы скрипт оставался одним самодостаточным файлом.
 
 ---
+
+### Замена заглушки без переустановки
+
+```bash
+goji-node decoy                 # меню выбора среди установленных шаблонов
+goji-node decoy blog            # поставить конкретную (или random)
+goji-node decoy --list          # список шаблонов, текущая отмечена
+goji-node decoy --pull          # скачать свежие шаблоны из репозитория (codeload.github.com)
+goji-node decoy --from ~/mysite # свой сайт: каталог, .tar.gz/.zip или https-ссылка на архив
+goji-node decoy --undo          # вернуть предыдущий сайт
+```
+
+Свой сайт должен содержать `index.html` (в корне или в единственной вложенной папке). Он сохраняется как `custom-<имя>`, переживает `install.sh --resume` и не затрагивается `--pull`. Архивы с путями `..`/абсолютными отклоняются, ссылки удаляются, максимум 200 МБ. Перед каждой заменой делается резервная копия в `/var/backups/goji-node/` (5 последних). `--pull` обновляет только шаблоны сайтов, не сам скрипт и не настройки сервера. После `install.sh --resume` версии стандартных шаблонов возвращаются к встроенным в скрипт.
 
 ## Обновление установщика
 
