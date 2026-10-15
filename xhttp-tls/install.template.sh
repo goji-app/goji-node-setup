@@ -23,7 +23,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.4.0
+VERSION=1.5.0
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -667,22 +667,27 @@ goji_show_profile() {
 
 # Развёртывание сайта-заглушки из каталога шаблона. Использует GOJI_WEBROOT.
 goji_deploy_decoy() { # goji_deploy_decoy <name> <templates dir>
-  local name=$1 src=$2/$1
+  local name=$1 src=$2/$1 new="$GOJI_WEBROOT.new"
   [[ -d $src ]] || { echo "Нет шаблона «$name»" >&2; return 1; }
-  mkdir -p "$GOJI_WEBROOT"
-  find "$GOJI_WEBROOT" -mindepth 1 -delete
-  cp -a "$src/." "$GOJI_WEBROOT/"
-  [[ -f "$GOJI_WEBROOT/LICENSE" ]] && mv "$GOJI_WEBROOT/LICENSE" "$GOJI_WEBROOT/LICENSE.txt"
-  if [[ ! -f "$GOJI_WEBROOT/404.html" ]]; then
-    cat > "$GOJI_WEBROOT/404.html" <<'EOF404'
+  # Сайт собирается рядом и подменяется целиком: при ошибке копирования старый остаётся на месте.
+  rm -rf "$new"; mkdir -p "$new"
+  if ! cp -a "$src/." "$new/"; then rm -rf "$new"; echo "Не удалось скопировать шаблон «$name»" >&2; return 1; fi
+  [[ -f "$new/LICENSE" ]] && mv "$new/LICENSE" "$new/LICENSE.txt"
+  if [[ ! -f "$new/404.html" ]]; then
+    cat > "$new/404.html" <<'EOF404'
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>404 Not Found</title>
 <style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;color:#333}h1{font-weight:500}</style></head>
 <body><div><h1>404 Not Found</h1><p><a href="/">Home</a></p></div></body></html>
 EOF404
   fi
-  [[ -f "$GOJI_WEBROOT/robots.txt" ]] || printf 'User-agent: *\nAllow: /\n' > "$GOJI_WEBROOT/robots.txt"
-  echo "$name" > "$GOJI_WEBROOT/.template"
-  chown -R www-data:www-data "$GOJI_WEBROOT" 2>/dev/null || true
+  [[ -f "$new/robots.txt" ]] || printf 'User-agent: *\nAllow: /\n' > "$new/robots.txt"
+  echo "$name" > "$new/.template"
+  chown -R www-data:www-data "$new" 2>/dev/null || true
+  chmod 755 "$new"
+  rm -rf "$GOJI_WEBROOT.old"
+  [[ ! -e $GOJI_WEBROOT ]] || mv "$GOJI_WEBROOT" "$GOJI_WEBROOT.old"
+  mv "$new" "$GOJI_WEBROOT"
+  rm -rf "$GOJI_WEBROOT.old"
 }
 
 # Список шаблонов с номерами: печатает «имя<TAB>описание».
@@ -717,17 +722,162 @@ goji_tpl_choose() { # goji_tpl_choose <templates dir> [current]
   done
 }
 
-# Смена заглушки: goji-node decoy [имя]
+# ---- свои и обновлённые заглушки (без переустановки скрипта) -----------------------------
+# Резервная копия текущего сайта перед заменой: /var/backups/goji-node/decoy-*.tar.gz (хранятся 5 последних).
+goji_decoy_backup() {
+  [[ -n $(ls -A "$GOJI_WEBROOT" 2>/dev/null) ]] || return 0
+  mkdir -p /var/backups/goji-node
+  tar -czf "/var/backups/goji-node/decoy-$(date +%Y%m%d-%H%M%S-%N).tar.gz" -C "$GOJI_WEBROOT" . 2>/dev/null || true
+  ls -1t /var/backups/goji-node/decoy-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+}
+# Распаковка архива .tar.gz/.tgz или .zip в каталог; пути с «..», абсолютные пути и ссылки отбрасываются.
+goji_decoy_extract() { # goji_decoy_extract <архив> <каталог>
+  local f=$1 out=$2 l bad=0
+  if tar -tzf "$f" >/dev/null 2>&1; then
+    while IFS= read -r l; do
+      case "/$l/" in */../*) bad=1 ;; esac
+      [[ $l == /* ]] && bad=1
+    done < <(tar -tzf "$f")
+    (( ! bad )) || { echo "Архив отклонён: в нём пути с «..» или абсолютные." >&2; return 1; }
+    tar -xzf "$f" -C "$out" --no-same-owner --no-same-permissions || return 1
+  elif command -v unzip >/dev/null 2>&1 && unzip -tq "$f" >/dev/null 2>&1; then
+    while IFS= read -r l; do
+      case "/$l/" in */../*) bad=1 ;; esac
+      [[ $l == /* ]] && bad=1
+    done < <(unzip -Z1 "$f")
+    (( ! bad )) || { echo "Архив отклонён: в нём пути с «..» или абсолютные." >&2; return 1; }
+    unzip -q "$f" -d "$out" || return 1
+  else
+    echo "Не удалось распознать архив: нужен .tar.gz/.tgz или .zip (для zip — пакет unzip: apt-get install unzip)." >&2
+    return 1
+  fi
+  find "$out" -type l -delete 2>/dev/null
+  find "$out" ! -type f ! -type d -delete 2>/dev/null
+  return 0
+}
+# Каталог с index.html: сам каталог или единственная вложенная папка (как делают при архивации сайта).
+goji_decoy_root() {
+  local d=$1 sub
+  if [[ -f $d/index.html ]]; then echo "$d"; return 0; fi
+  mapfile -t sub < <(find "$d" -mindepth 1 -maxdepth 1 -type d)
+  if (( ${#sub[@]} == 1 )) && [[ -f ${sub[0]}/index.html ]]; then echo "${sub[0]}"; return 0; fi
+  return 1
+}
+# Сохраняет свой сайт (каталог, архив или https-ссылка на архив) как заглушку custom-<имя>; печатает имя.
+goji_decoy_import() { # goji_decoy_import <каталог|архив|https-URL>
+  local src=$1 tmp work root base name
+  mkdir -p "$GOJI_SHARE"
+  tmp=$(mktemp -d "$GOJI_SHARE/.import.XXXXXX") || return 1
+  work=$tmp/site; mkdir -p "$work"
+  if [[ $src == https://* ]]; then
+    if ! curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 --max-filesize 209715200 -o "$tmp/dl" "$src"; then
+      echo "Не удалось скачать $src" >&2; rm -rf "$tmp"; return 1
+    fi
+    base=${src%%\?*}; base=${base##*/}
+    goji_decoy_extract "$tmp/dl" "$work" || { rm -rf "$tmp"; return 1; }
+  elif [[ -d $src ]]; then
+    base=$(basename "$(readlink -f "$src")")
+    cp -a "$src/." "$work/" || { rm -rf "$tmp"; return 1; }
+    find "$work" -type l -delete 2>/dev/null
+    find "$work" ! -type f ! -type d -delete 2>/dev/null
+  elif [[ -f $src ]]; then
+    base=${src##*/}
+    goji_decoy_extract "$src" "$work" || { rm -rf "$tmp"; return 1; }
+  else
+    echo "Не найдено: $src (нужен каталог, архив .tar.gz/.zip или https-ссылка на архив)" >&2; rm -rf "$tmp"; return 1
+  fi
+  if ! root=$(goji_decoy_root "$work"); then
+    echo "В сайте нет index.html (в корне или в единственной вложенной папке)." >&2; rm -rf "$tmp"; return 1
+  fi
+  if (( $(du -sm "$root" | cut -f1) > 200 )); then echo "Сайт больше 200 МБ — слишком много для заглушки." >&2; rm -rf "$tmp"; return 1; fi
+  base=${base%%.*}
+  name=$(printf '%s' "custom-$base" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/-$//')
+  [[ $name != custom ]] || name=custom-site
+  rm -rf "${GOJI_SHARE:?}/templates/$name"; mkdir -p "$GOJI_SHARE/templates/$name"
+  cp -a "$root/." "$GOJI_SHARE/templates/$name/"
+  rm -rf "$tmp"
+  echo "$name"
+}
+# Скачивает свежие шаблоны из репозитория GitHub (только каталог xhttp-tls/templates) в /usr/share/goji-node/templates.
+# Свои заглушки (custom-*) не трогаются. Сам install.sh и настройки сервера не меняются.
+goji_decoy_pull() { # goji_decoy_pull <templates dir>
+  local dir=$1 tmp d n cnt=0 repo=${GOJI_UPDATE_REPO:-$GOJI_REPO} br=${GOJI_UPDATE_BRANCH:-$GOJI_BRANCH}
+  mkdir -p "$GOJI_SHARE" "$dir"
+  tmp=$(mktemp -d "$GOJI_SHARE/.pull.XXXXXX") || return 1
+  echo "Скачиваю шаблоны из $repo ($br)…"
+  if ! curl -fsSL --proto '=https' --tlsv1.2 --max-time 180 --max-filesize 209715200 -o "$tmp/r.tgz" "https://codeload.github.com/$repo/tar.gz/refs/heads/$br"; then
+    echo "Не удалось скачать репозиторий (нужен доступ к codeload.github.com)." >&2; rm -rf "$tmp"; return 1
+  fi
+  mkdir "$tmp/x"
+  if ! tar -xzf "$tmp/r.tgz" -C "$tmp/x" --strip-components=3 --no-same-owner --no-same-permissions --wildcards '*/xhttp-tls/templates/*' 2>/dev/null; then
+    echo "В архиве нет каталога xhttp-tls/templates." >&2; rm -rf "$tmp"; return 1
+  fi
+  find "$tmp/x" -type l -delete 2>/dev/null
+  for d in "$tmp"/x/*/; do
+    [[ -d ${d%/} ]] || continue
+    n=${d%/}; n=${n##*/}
+    [[ -f $d/index.html && $n != custom-* ]] || continue
+    rm -rf "${dir:?}/$n"; cp -a "${d%/}" "$dir/$n"; cnt=$((cnt + 1))
+  done
+  rm -rf "$tmp"
+  (( cnt )) || { echo "В репозитории не найдено ни одного шаблона." >&2; return 1; }
+  echo "Обновлено шаблонов: $cnt"
+}
+goji_decoy_undo() {
+  local f
+  f=$(ls -1t /var/backups/goji-node/decoy-*.tar.gz 2>/dev/null | head -n 1)
+  [[ -n $f ]] || { echo "Резервных копий сайта нет (/var/backups/goji-node/decoy-*.tar.gz)." >&2; return 1; }
+  goji_decoy_backup
+  rm -rf "$GOJI_WEBROOT.new"; mkdir -p "$GOJI_WEBROOT.new"
+  tar -xzf "$f" -C "$GOJI_WEBROOT.new" --no-same-owner || { rm -rf "$GOJI_WEBROOT.new"; return 1; }
+  chown -R www-data:www-data "$GOJI_WEBROOT.new" 2>/dev/null || true
+  rm -rf "$GOJI_WEBROOT.old"; [[ ! -e $GOJI_WEBROOT ]] || mv "$GOJI_WEBROOT" "$GOJI_WEBROOT.old"
+  mv "$GOJI_WEBROOT.new" "$GOJI_WEBROOT"; rm -rf "$GOJI_WEBROOT.old"
+  echo "Восстановлен сайт из ${f##*/}."
+}
+
+# Смена заглушки без переустановки скрипта:
+#   goji-node decoy                     меню выбора среди установленных шаблонов
+#   goji-node decoy <имя|random>        поставить конкретную
+#   goji-node decoy --list              список шаблонов
+#   goji-node decoy --pull [имя]        сначала скачать свежие шаблоны с GitHub (новые появятся в списке)
+#   goji-node decoy --from <каталог|архив|https-URL> [--yes]   свой сайт (должен содержать index.html)
+#   goji-node decoy --undo              вернуть предыдущий сайт из резервной копии
 goji_decoy() {
   gjc_load || return 1
-  local dir=$GOJI_SHARE/templates name=${1:-} code
+  local dir=$GOJI_SHARE/templates name="" pull=0 from="" list=0 undo=0 code
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pull) pull=1 ;;
+      --from) from=${2:-}; [[ -n $from ]] || { echo "--from: укажите каталог, архив или https-ссылку" >&2; return 1; }; shift ;;
+      --list) list=1 ;;
+      --undo) undo=1 ;;
+      --yes|-y) ;;
+      -h|--help) echo "goji-node decoy [имя|random] | --list | --pull [имя] | --from <каталог|архив|https-URL> | --undo"; return 0 ;;
+      -*) echo "Неизвестный параметр: $1 (goji-node decoy --help)" >&2; return 1 ;;
+      *) name=$1 ;;
+    esac
+    shift
+  done
+  if (( undo )); then goji_decoy_undo || return 1; return 0; fi
   [[ -d $dir ]] || { declare -F install_templates >/dev/null && install_templates "$dir"; }
+  if (( pull )); then goji_decoy_pull "$dir" || return 1; fi
   [[ -d $dir ]] || { echo "Шаблоны не найдены в $dir — запустите install.sh --resume." >&2; return 1; }
+  if (( list )); then
+    local n cur; cur=$(cat "$GOJI_WEBROOT/.template" 2>/dev/null)
+    while IFS=$'\t' read -r n d; do printf '  %-22s %s%s\n' "$n" "$d" "$([[ $n == "$cur" ]] && echo '  ← сейчас')"; done < <(goji_tpl_list "$dir")
+    return 0
+  fi
+  if [[ -n $from ]]; then
+    name=$(goji_decoy_import "$from") || return 1
+    echo "Сайт сохранён как заглушка «$name»."
+  fi
   [[ -n $name ]] || name=$(goji_tpl_choose "$dir" "$(cat "$GOJI_WEBROOT/.template" 2>/dev/null)")
   if [[ $name == random ]]; then name=$(ls "$dir" | shuf -n 1); fi
+  goji_decoy_backup
   goji_deploy_decoy "$name" "$dir" || return 1
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>/dev/null || true)
-  echo "Заглушка «$name» установлена. Проверка https://$GOJI_DOMAIN/ → HTTP ${code:-нет ответа}."
+  echo "Заглушка «$name» установлена. Проверка https://$GOJI_DOMAIN/ → HTTP ${code:-нет ответа}. Вернуть прежнюю: goji-node decoy --undo"
 }
 
 # ---- удаление компонентов установки -------------------------------------------------------
@@ -1038,7 +1188,9 @@ goji_menu() {
     gjm_section "Сервер" 171
     gjm_item 7 "Открытые порты и правила UFW"
     gjm_item 8 "Профиль для Remnawave" "готовый JSON для копирования"
-    gjm_item 9 "Сменить сайт-заглушку"
+    gjm_item 9 "Сменить сайт-заглушку" "из установленных шаблонов"
+    gjm_item 14 "Скачать новые шаблоны заглушек" "с GitHub, без переустановки"
+    gjm_item 15 "Свой сайт как заглушка" "каталог, архив или ссылка"
     gjm_item 10 "Автопродление сертификата" "проверка certbot --dry-run"
     gjm_section "Обслуживание" 214
     gjm_item 12 "Найти и исправить ошибки" "автоматически" "$GM_GRN"
@@ -1061,6 +1213,9 @@ goji_menu() {
       11) goji_uninstall; [[ -r $GOJI_ETC/install.conf ]] || return 0 ;;
       12) goji_fix || true; gjm_pause ;;
       13) goji_update || true; gjm_pause ;;
+      14) goji_decoy --pull || true; gjm_pause ;;
+      15) read -r -p "  Каталог, архив (.tar.gz/.zip) или https-ссылка: " __src || __src=""
+          if [[ -n $__src ]]; then goji_decoy --from "$__src" || true; fi; gjm_pause ;;
       0|q|"") return 0 ;;
       *) echo "  Нет такого пункта." ;;
     esac
@@ -1078,7 +1233,7 @@ goji_main() {
     profile)      goji_show_profile ;;
     decoy)        shift; goji_decoy "$@" ;;
     update)       shift; goji_update "$@" ;;
-    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | fix [--dry-run] | settings | uninstall [--yes] [компонент...|all] | ports | profile | decoy [имя|random] | update [--check|--notes|--yes|--no-apply|--off|--on]" ;;
+    -h|--help|help) echo "goji-node [menu] | check [web|node|system|security|all] | fix [--dry-run] | settings | uninstall [--yes] [компонент...|all] | ports | profile | decoy [имя|random|--list|--pull|--from <путь>|--undo] | update [--check|--notes|--yes|--no-apply|--off|--on]" ;;
     *)            echo "Неизвестная команда: $1 (goji-node --help)" >&2; return 1 ;;
   esac
 }
@@ -1270,6 +1425,12 @@ if [[ -t 1 ]]; then gjm_banner "установка"; echo; fi
 TPL_DIR=$(mktemp -d)
 trap 'rm -rf "$TPL_DIR"' EXIT
 install_templates "$TPL_DIR"
+# Свои и скачанные (goji-node decoy --from / --pull) заглушки переживают повторный проход установки.
+for __d in "$GOJI_SHARE"/templates/*/; do
+  [[ -d ${__d%/} ]] || continue
+  __n=${__d%/}; __n=${__n##*/}
+  [[ -d $TPL_DIR/$__n ]] || cp -a "${__d%/}" "$TPL_DIR/$__n"
+done
 TEMPLATES=$(ls "$TPL_DIR")
 rm -rf "$GOJI_SHARE/templates"; mkdir -p "$GOJI_SHARE/templates"
 cp -a "$TPL_DIR/." "$GOJI_SHARE/templates/"
@@ -2541,7 +2702,7 @@ install_check_command() {
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION GOJI_REPO GOJI_BRANCH
     declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
       gj_nodeport_public gj_nodeport_close gjc_nodeport gj_docker_public gj_ufw_allows gjc_docker goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
-      goji_tpl_choose goji_decoy gup_get gup_gt gup_latest gup_off gup_refresh gup_cached gup_notice gup_notes gup_reject gup_install goji_update goji_menu goji_main install_profile_file
+      goji_tpl_choose goji_decoy_backup goji_decoy_extract goji_decoy_root goji_decoy_import goji_decoy_pull goji_decoy_undo goji_decoy gup_get gup_gt gup_latest gup_off gup_refresh gup_cached gup_notice gup_notes gup_reject gup_install goji_update goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
     echo 'goji_main "$@"'
   } > /usr/local/sbin/goji-node
