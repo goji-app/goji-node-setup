@@ -1,4 +1,4 @@
-# goji-node-setup
+# node-setup
 
 Установщик одной командой для VPS-ноды на [Remnawave](https://docs.rw): TLS-фронт на nginx для **XHTTP-профиля Xray**, сайт-заглушка и переустановка **Remnawave Node** в Docker.
 
