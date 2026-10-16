@@ -4,7 +4,7 @@
 
 > One command to turn a fresh Debian/Ubuntu VPS into a Remnawave node behind nginx + Let's Encrypt, with an XHTTP Xray profile and a static site on every other path.
 
-**Текущая версия: 1.5.0** — заглушку можно заменить без переустановки (`goji-node decoy`), в том числе своим сайтом; скрипт сам сообщает о новой версии (`goji-node update`). Полная история: [CHANGELOG.md](CHANGELOG.md).
+**Текущая версия: 1.5.1** — единое оформление меню и отчётов: нумерация по порядку, компактная шапка, итог проверки со счётчиками, подгонка под ширину терминала. Полная история: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

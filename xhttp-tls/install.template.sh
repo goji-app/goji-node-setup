@@ -23,7 +23,7 @@
 # порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
 set -euo pipefail
 
-VERSION=1.5.0
+VERSION=1.5.1
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
@@ -65,10 +65,15 @@ NO_UPD=0
 GOJI_SELF=""
 [[ -f $0 && $0 == *.sh ]] && GOJI_SELF=$(readlink -f "$0") || true
 
-die()  { echo -e "\e[31m[x] $*\e[0m" >&2; exit 1; }
-info() { echo -e "\e[36m[*] $*\e[0m"; }
-ok()   { echo -e "\e[32m[+] $*\e[0m"; }
-warn() { echo -e "\e[33m[!] $*\e[0m"; }
+# Сообщения установки: те же знаки, что в отчёте проверки; цвет только на терминале (NO_COLOR отключает).
+gj_msg() { # gj_msg <цвет ANSI> <знак> <текст> [fd]
+  local fd=${4:-1}
+  if [[ -t $fd && -z ${NO_COLOR:-} ]]; then printf '\e[%sm%s\e[0m %s\n' "$1" "$2" "$3" >&"$fd"; else printf '%s %s\n' "$2" "$3" >&"$fd"; fi
+}
+die()  { gj_msg 31 "✗" "$*" 2; exit 1; }
+info() { gj_msg 36 "›" "$*"; }
+ok()   { gj_msg 32 "✓" "$*"; }
+warn() { gj_msg 33 "!" "$*"; }
 
 # ---------------------------------------------------------------- component report, menu
 # Everything between here and "end of shared block" is also installed as /usr/local/sbin/goji-node
@@ -78,14 +83,51 @@ GOJI_ETC=/etc/goji-node
 GOJI_SHARE=/usr/share/goji-node
 GOJI_WEBROOT=/var/www/decoy
 
+# Ширина терминала: не уже 60 и не шире 100; без терминала (лог, pipe) — 100.
+gj_cols() {
+  local c=100
+  if [[ -n ${COLUMNS:-} ]]; then c=$COLUMNS
+  elif [[ -t 1 ]]; then c=$(tput cols 2>/dev/null || echo 80); fi
+  [[ $c =~ ^[0-9]+$ ]] || c=80
+  (( c < 60 )) && c=60; (( c > 100 )) && c=100
+  echo "$c"
+}
+# gj_wrap <ширина> <текст>: перенос по словам, одна строка на вывод (без потери текста).
+gj_wrap() {
+  local w=$1 line="" word
+  for word in $2; do
+    if [[ -z $line ]]; then line=$word
+    elif (( ${#line} + 1 + ${#word} <= w )); then line+=" $word"
+    else echo "$line"; line=$word; fi
+  done
+  [[ -z $line ]] || echo "$line"
+}
 gj_row() { # gj_row <status ok|warn|fail> <component> <detail>
-  local c=$'\e[32m✓\e[0m' w=$'\e[33m!\e[0m' f=$'\e[31m✗\e[0m' mark pad
-  case "$1" in ok) mark=$c ;; warn) mark=$w; GJ_WARN=$((${GJ_WARN:-0} + 1)) ;; *) mark=$f ;; esac
-  pad=$((34 - ${#2})); (( pad < 1 )) && pad=1
-  printf ' %s %s%*s %s\n' "$mark" "$2" "$pad" "" "$3"
+  gjm_init
+  local mark dc pad=26 w avail first=1 l
+  case "$1" in
+    ok)   mark="${GM_GRN}✓${GM_R}"; dc=$GM_D; GJ_NOK=$((${GJ_NOK:-0} + 1)) ;;
+    warn) mark="${GM_YEL}!${GM_R}"; dc=$GM_YEL; GJ_WARN=$((${GJ_WARN:-0} + 1)) ;;
+    *)    mark="${GM_RED}✗${GM_R}"; dc=$GM_RED; GJ_NBAD=$((${GJ_NBAD:-0} + 1)) ;;
+  esac
+  (( ${#2} >= pad )) && pad=$(( ${#2} + 1 ))
+  w=$(gj_cols); avail=$(( w - pad - 4 )); (( avail < 24 )) && avail=24
+  while IFS= read -r l; do
+    if (( first )); then
+      printf ' %s %s%*s %s%s%s\n' "$mark" "$2" "$((pad - ${#2}))" "" "$dc" "$l" "$GM_R"; first=0
+    else
+      printf '   %*s %s%s%s\n' "$pad" "" "$dc" "$l" "$GM_R"
+    fi
+  done < <(gj_wrap "$avail" "$3")
+  (( first )) && printf ' %s %s\n' "$mark" "$2"
+  return 0
 }
 
-gj_title() { echo; echo "$1"; echo "----------------------------------------------------------------"; }
+gj_title() { # gj_title <заголовок>: жирный заголовок и тонкая линия
+  gjm_init
+  local w; w=$(gj_cols)
+  printf '\n %s%s%s %s%s%s\n' "$GM_B" "$1" "$GM_R" "$GM_D" "$(gjm_rule ─ $(( w - ${#1} - 3 > 4 ? w - ${#1} - 3 : 4 )))" "$GM_R"
+}
 
 # ---- оформление меню ----------------------------------------------------------------------
 # Цвета включаются только на терминале (NO_COLOR отключает, GOJI_COLOR=1 включает принудительно).
@@ -94,10 +136,8 @@ gjm_init() { # gjm_init [fd]: fd, на который пойдёт вывод (�
   if [[ ${GOJI_COLOR:-} == 1 || ( -t ${1:-1} && -z ${NO_COLOR:-} ) ]]; then
     GM_R=$'\e[0m'; GM_B=$'\e[1m'; GM_D=$'\e[2m'; GM_RED=$'\e[31m'; GM_GRN=$'\e[32m'
     GM_YEL=$'\e[33m'; GM_CYN=$'\e[36m'
-    GM_BGY=$'\e[1;30;43m'; GM_BGG=$'\e[1;30;42m'; GM_BGR=$'\e[1;97;41m'
   else
     GM_R=""; GM_B=""; GM_D=""; GM_RED=""; GM_GRN=""; GM_YEL=""; GM_CYN=""
-    GM_BGY=""; GM_BGG=""; GM_BGR=""
   fi
 }
 gjm_rule() { local s; printf -v s '%*s' "$2" ''; printf '%s' "${s// /$1}"; } # gjm_rule <символ> <число>
@@ -141,26 +181,39 @@ gjm_banner() {
   done
   printf '  %s%s%s\n' "$GM_D" "VPN-нода · XHTTP + TLS · Remnawave" "$GM_R"
 }
+# gjm_brand [подзаголовок]: компактная шапка меню, одна строка (полный логотип — только при установке).
+gjm_brand() {
+  gjm_init
+  local w; w=$(gj_cols)
+  echo
+  if [[ -n $GM_B ]]; then printf '  \e[1;38;5;51mGOJI\e[0m'; else printf '  GOJI'; fi
+  printf ' %s%s%s%s\n' "$GM_D" "${VERSION:+v$VERSION}" "${1:+ · $1}" "$GM_R"
+  printf '  %s%s%s\n' "$GM_D" "$(gjm_rule ─ $(( w - 4 )))" "$GM_R"
+}
 # gjm_section <заголовок> [код цвета 0-255]: раздел с цветным маркером.
 gjm_section() {
-  local col=${2:-45}
+  local col=${2:-45} rl cols
+  cols=$(gj_cols); rl=$(( cols - ${#1} - 6 ))
+  GM_SEC=$col; GM_NARROW=0; (( cols < 80 )) && GM_NARROW=1
   if [[ -n $GM_B ]]; then
-    printf '\n  \e[1;38;5;%sm◆ %s%s %s%s%s\n' "$col" "$1" "$GM_R" "$GM_D" "$(gjm_rule ─ $((56 - ${#1})))" "$GM_R"
+    printf '\n  \e[1;38;5;%sm◆ %s%s %s%s%s\n' "$col" "$1" "$GM_R" "$GM_D" "$(gjm_rule ─ $((rl > 4 ? rl : 4)))" "$GM_R"
   else
-    printf '\n  ◆ %s %s\n' "$1" "$(gjm_rule - $((56 - ${#1})))"
+    printf '\n  ◆ %s %s\n' "$1" "$(gjm_rule - $((rl > 4 ? rl : 4)))"
   fi
 }
-gjm_item() { # gjm_item <ключ> <текст> [подсказка] [цвет: $GM_GRN или $GM_RED]
-  local pad=$((34 - ${#2})) pill
+gjm_item() { # gjm_item <ключ> <текст> [подсказка] [цвет: $GM_GRN или $GM_RED]; цвет номера — по разделу (GM_SEC)
+  local pad=$((34 - ${#2})) num txt=${4:-}
   (( pad < 1 )) && pad=1
-  if [[ -z $GM_B ]]; then pill=$(printf '[%2s]' "$1")
+  (( ${GM_NARROW:-0} )) && set -- "$1" "$2" "" "${4:-}"   # узкий терминал: подсказки не помещаются
+  if [[ -z $GM_B ]]; then num=$(printf '%3s)' "$1")
   else
-    local bg=$GM_BGY
-    [[ -n ${4:-} && ${4:-} == "$GM_GRN" ]] && bg=$GM_BGG
-    [[ -n ${4:-} && ${4:-} == "$GM_RED" ]] && bg=$GM_BGR
-    pill=$(printf '%s %2s %s' "$bg" "$1" "$GM_R")
+    case ${4:-} in
+      "$GM_GRN"|"$GM_RED") num=$(printf '%s%s%3s%s ' "$GM_B" "$4" "$1" "$GM_R") ;;
+      *) num=$(printf '\e[1;38;5;%sm%3s%s ' "${GM_SEC:-45}" "$1" "$GM_R") ;;
+    esac
+    [[ $1 == 0 ]] && { num=$(printf '%s%3s%s ' "$GM_D" "$1" "$GM_R"); txt=$GM_D; }
   fi
-  printf '   %s %s%s%s%*s %s%s%s\n' "$pill" "${4:-}" "$2" "${4:+$GM_R}" "$pad" "" "$GM_D" "${3:-}" "$GM_R"
+  printf '  %s %s%s%s%*s %s%s%s\n' "$num" "$txt" "$2" "${txt:+$GM_R}" "$pad" "" "$GM_D" "${3:-}" "$GM_R"
 }
 gjm_dot() { # gjm_dot ok|warn|fail|off <подпись>
   local c
@@ -199,7 +252,7 @@ gjc_load() {
   [[ -r $GOJI_ETC/install.conf ]] || { echo "Нет сохранённой установки ($GOJI_ETC/install.conf). Сначала запустите install.sh." >&2; return 1; }
   # shellcheck disable=SC1090,SC1091
   . "$GOJI_ETC/install.conf"
-  GJ_FAIL=0; GJ_PENDING=0; GJ_WARN=0
+  GJ_FAIL=0; GJ_PENDING=0; GJ_WARN=0; GJ_NOK=0; GJ_NBAD=0
   GJ_LIVE="/etc/letsencrypt/live/$GOJI_DOMAIN"
 }
 
@@ -227,7 +280,7 @@ gjc_why443() {
   l=$(ss -Hltnp 'sport = :443' 2>/dev/null | head -1)
   if [[ -z $l ]]; then
     if ! ss -Hltn "sport = :$GOJI_XRAY_PORT" 2>/dev/null | grep -q .; then
-      echo "TLS-фронт ещё не включён: профиль XHTTP не применён в Remnawave (goji-node → п. 8, затем goji-node fix)"
+      echo "TLS-фронт ещё не включён: профиль XHTTP не применён в Remnawave (профиль: goji-node profile, затем goji-node fix)"
     else
       echo "на :443 никто не слушает, хотя профиль XHTTP активен (исправить: goji-node fix)"
     fi
@@ -422,11 +475,20 @@ gjc_security() {
 }
 
 gjc_summary() {
-  echo "----------------------------------------------------------------"
-  if (( GJ_FAIL )); then echo "Итог: есть ошибки."; return 1; fi
-  if (( GJ_PENDING )); then echo "Итог: всё установлено, ожидается применение профиля XHTTP в Remnawave."; return 2; fi
-  if (( GJ_WARN )); then echo "Итог: ошибок нет, замечаний: $GJ_WARN (см. строки с «!»)."; else echo "Итог: всё в порядке."; fi
-  return 0
+  gjm_init
+  local ok=${GJ_NOK:-0} wn=${GJ_WARN:-0} bad=${GJ_NBAD:-0} w msg rc=0 hint=""
+  w=$(gj_cols)
+  printf '\n  %s%s%s\n' "$GM_D" "$(gjm_rule ─ $(( w - 4 )))" "$GM_R"
+  printf '  %s%s ок%s' "$GM_GRN" "$ok" "$GM_R"
+  (( wn )) && printf '   %s%s внимание%s' "$GM_YEL" "$wn" "$GM_R"
+  (( bad || GJ_FAIL )) && printf '   %s%s ошибка%s' "$GM_RED" "$(( bad > 0 ? bad : 1 ))" "$GM_R"
+  if (( GJ_FAIL )); then msg="есть ошибки"; rc=1; hint="исправить безопасное: goji-node fix"
+  elif (( GJ_PENDING )); then msg="всё установлено, ожидается применение профиля XHTTP в Remnawave"; rc=2; hint="профиль: goji-node profile"
+  elif (( wn )); then msg="ошибок нет, есть замечания (строки с «!»)"
+  else msg="всё в порядке"; fi
+  printf '   %s— %s%s\n' "$GM_D" "$msg" "$GM_R"
+  [[ -z $hint ]] || printf '  %s%s%s\n' "$GM_D" "$hint" "$GM_R"
+  return "$rc"
 }
 
 # goji_check [web|node|system|security|all]; код возврата: 0 / 1 / 2
@@ -525,7 +587,7 @@ goji_fix() {
       "остановите этот сервис или перенесите его на другой порт (например 8443), затем goji-node fix. Чужой сервис скрипт не трогает."
   elif (( ! xh )); then
     gj_row warn "Профиль XHTTP" "не применён в Remnawave: на 127.0.0.1:$GOJI_XRAY_PORT никто не слушает"
-    echo "      → покажите профиль (goji-node → п. 8), вставьте его в Remnawave, назначьте ноде, затем goji-node fix"
+    echo "      → покажите профиль (goji-node profile), вставьте его в Remnawave, назначьте ноде, затем goji-node fix"
     GJF_MANUAL=$((GJF_MANUAL + 1))
   elif [[ -z $l ]]; then
     gjf_resume "TLS-фронт nginx не включён (профиль XHTTP активен, порт 443 свободен)"
@@ -1078,7 +1140,7 @@ gup_notice() { # короткое уведомление о новой верс�
   fi
   gup_gt "$v" "$VERSION" || return 0
   gjm_init
-  printf '\n  %s↑ Доступна новая версия установщика: %s%s%s (установлена %s). Обновить: %sgoji-node update%s\n' \
+  printf '\n  %s↑ Доступна версия %s%s%s (у вас %s) — %sgoji-node update%s\n' \
     "$GM_YEL" "$GM_B" "$v" "$GM_R$GM_YEL" "$VERSION" "$GM_B" "$GM_R"
 }
 gup_notes() { # gup_notes <установленная версия>: записи CHANGELOG.md новее неё
@@ -1172,12 +1234,12 @@ goji_update() {
 }
 
 goji_menu() {
-  local c
+  local c cur
   while :; do
-    gjm_banner "панель управления"
-    echo
+    gjm_brand "панель управления"
     gjm_status
     gup_notice
+    cur=$(cat "$GOJI_WEBROOT/.template" 2>/dev/null || true)
     gjm_section "Проверка" 45
     gjm_item 1 "Полная проверка настроек" "всё сразу"
     gjm_item 2 "Установленные настройки" "с чем ставился сервер"
@@ -1185,17 +1247,18 @@ goji_menu() {
     gjm_item 4 "Нода Remnawave и Xray"
     gjm_item 5 "Система" "BBR, ZRAM, обновления"
     gjm_item 6 "Защита" "UFW, Fail2ban, SSH, ping"
-    gjm_section "Сервер" 171
-    gjm_item 7 "Открытые порты и правила UFW"
-    gjm_item 8 "Профиль для Remnawave" "готовый JSON для копирования"
-    gjm_item 9 "Сменить сайт-заглушку" "из установленных шаблонов"
-    gjm_item 14 "Скачать новые шаблоны заглушек" "с GitHub, без переустановки"
-    gjm_item 15 "Свой сайт как заглушка" "каталог, архив или ссылка"
-    gjm_item 10 "Автопродление сертификата" "проверка certbot --dry-run"
+    gjm_section "Заглушка" 171
+    gjm_item 7 "Сменить сайт-заглушку" "${cur:+сейчас: $cur}"
+    gjm_item 8 "Скачать новые шаблоны" "с GitHub, без переустановки"
+    gjm_item 9 "Свой сайт как заглушка" "каталог, архив или ссылка"
+    gjm_section "Сервер" 75
+    gjm_item 10 "Открытые порты и правила UFW"
+    gjm_item 11 "Профиль для Remnawave" "готовый JSON для копирования"
+    gjm_item 12 "Автопродление сертификата" "проверка certbot --dry-run"
     gjm_section "Обслуживание" 214
-    gjm_item 12 "Найти и исправить ошибки" "автоматически" "$GM_GRN"
     gjm_item 13 "Обновление установщика" "проверить и скачать новую версию"
-    gjm_item 11 "Удалить компоненты установки" "с выбором" "$GM_RED"
+    gjm_item 14 "Найти и исправить ошибки" "автоматически" "$GM_GRN"
+    gjm_item 15 "Удалить компоненты установки" "с выбором" "$GM_RED"
     gjm_item 0 "Выход"
     echo
     read -r -p "  $(gjm_grad 'Ваш выбор') ${GM_B}❯${GM_R} " c || return 0
@@ -1206,16 +1269,16 @@ goji_menu() {
       4) goji_check node || true; gjm_pause ;;
       5) goji_check system || true; gjm_pause ;;
       6) goji_check security || true; gjm_pause ;;
-      7) goji_ports; gjm_pause ;;
-      8) goji_show_profile; gjm_pause ;;
-      9) goji_decoy; gjm_pause ;;
-      10) certbot renew --dry-run || true; gjm_pause ;;
-      11) goji_uninstall; [[ -r $GOJI_ETC/install.conf ]] || return 0 ;;
-      12) goji_fix || true; gjm_pause ;;
+      7) goji_decoy; gjm_pause ;;
+      8) goji_decoy --pull || true; gjm_pause ;;
+      9) read -r -p "  Каталог, архив (.tar.gz/.zip) или https-ссылка: " __src || __src=""
+         if [[ -n $__src ]]; then goji_decoy --from "$__src" || true; fi; gjm_pause ;;
+      10) goji_ports; gjm_pause ;;
+      11) goji_show_profile; gjm_pause ;;
+      12) certbot renew --dry-run || true; gjm_pause ;;
       13) goji_update || true; gjm_pause ;;
-      14) goji_decoy --pull || true; gjm_pause ;;
-      15) read -r -p "  Каталог, архив (.tar.gz/.zip) или https-ссылка: " __src || __src=""
-          if [[ -n $__src ]]; then goji_decoy --from "$__src" || true; fi; gjm_pause ;;
+      14) goji_fix || true; gjm_pause ;;
+      15) goji_uninstall; [[ -r $GOJI_ETC/install.conf ]] || return 0 ;;
       0|q|"") return 0 ;;
       *) echo "  Нет такого пункта." ;;
     esac
@@ -1328,8 +1391,7 @@ if [[ $UNINSTALL -eq 1 ]]; then goji_uninstall; exit $?; fi
 # проверить установленное, и только потом (по выбору) начинать установку заново.
 if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
   while :; do
-    gjm_banner "на сервере уже есть установка"
-    echo
+    gjm_brand "на сервере уже есть установка"
     gjm_status
     gup_notice
     gjm_section "Что сделать?" 45
@@ -1338,8 +1400,8 @@ if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
     gjm_item 3 "Меню goji-node" "проверки, профиль Remnawave, заглушка"
     gjm_item 4 "Найти и исправить ошибки" "автоматически" "$GM_GRN"
     gjm_item 5 "Переустановить / изменить установку" "вопросы заново"
-    gjm_item 7 "Обновление установщика" "проверить и скачать новую версию"
-    gjm_item 6 "Удалить компоненты установки" "с выбором" "$GM_RED"
+    gjm_item 6 "Обновление установщика" "проверить и скачать новую версию"
+    gjm_item 7 "Удалить компоненты установки" "с выбором" "$GM_RED"
     gjm_item 0 "Выход"
     echo
     read -r -p "  $(gjm_grad 'Ваш выбор') ${GM_B}❯${GM_R} " __m </dev/tty || exit 0
@@ -1350,8 +1412,8 @@ if [[ -r $CONF_FILE && $ARGC -eq 0 && -r /dev/tty ]]; then
       4) rc=0; goji_fix || rc=$?
          if (( GJF_RESUME )); then RESUME=1; load_resume; info "Выполняю повторный проход установки (--resume)"; break; fi ;;
       5) break ;;
-      6) goji_uninstall || true; [[ -r $CONF_FILE ]] || exit 0 ;;
-      7) goji_update || true ;;
+      6) goji_update || true ;;
+      7) goji_uninstall || true; [[ -r $CONF_FILE ]] || exit 0 ;;
       0|q|"") exit 0 ;;
       *) echo "  Нет такого пункта." ;;
     esac
@@ -2700,7 +2762,7 @@ install_check_command() {
     echo '#!/usr/bin/env bash'
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION GOJI_REPO GOJI_BRANCH
-    declare -f gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
+    declare -f gj_msg gj_cols gj_wrap gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_brand gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
       gj_nodeport_public gj_nodeport_close gjc_nodeport gj_docker_public gj_ufw_allows gjc_docker goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy_backup goji_decoy_extract goji_decoy_root goji_decoy_import goji_decoy_pull goji_decoy_undo goji_decoy gup_get gup_gt gup_latest gup_off gup_refresh gup_cached gup_notice gup_notes gup_reject gup_install goji_update goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
