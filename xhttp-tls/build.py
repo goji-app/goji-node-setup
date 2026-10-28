@@ -18,7 +18,9 @@ with tarfile.open(fileobj=buf, mode="w:gz") as t:
 b64 = base64.b64encode(buf.getvalue()).decode()
 src = open(os.path.join(here, "install.template.sh"), encoding="utf-8").read()
 prof = base64.b64encode(open(os.path.join(here, "xray-node-profile.json"), "rb").read()).decode()
-open(os.path.join(here, "install.sh"), "w", encoding="utf-8", newline="\n").write(src.replace("__TEMPLATES_B64__", b64).replace("__PROFILE_B64__", prof))
+# vps-psiphon (MIT) целиком и без изменений: ставится вместе с нодой (см. psiphon/README.md)
+psi = base64.b64encode(open(os.path.join(here, "psiphon", "psiphon_install.sh"), "rb").read()).decode()
+open(os.path.join(here, "install.sh"), "w", encoding="utf-8", newline="\n").write(src.replace("__TEMPLATES_B64__", b64).replace("__PROFILE_B64__", prof).replace("__PSIPHON_B64__", psi))
 print(f"install.sh built, templates archive {len(buf.getvalue())//1024} KB")
 # Файлы для самообновления установщика (goji-node update): версия и контрольная сумма install.sh.
 import hashlib, re
