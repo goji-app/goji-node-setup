@@ -148,7 +148,12 @@
           "domain:notebooklm.google",
           "domain:ai.google.dev",
           "domain:deepmind.google",
-          "domain:labs.google"
+          "domain:labs.google",
+          "domain:geminiweb-pa.clients6.google.com",
+          "domain:waa-pa.clients6.google.com",
+          "domain:appsgenaiserver-pa.clients6.google.com",
+          "domain:signaler-pa.clients6.google.com",
+          "domain:ogads-pa.clients6.google.com"
         ],
         "balancerTag": "google-balancer"
       }

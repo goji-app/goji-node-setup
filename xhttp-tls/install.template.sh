@@ -8,6 +8,7 @@
 #                            [--panel-ip 1.2.3.4] [--skip-node]
 #                            [--template random|analytics|blog|docs|saas|freelancer|resume|
 #                                        creative|grayscale|new-age|agency|livecams]
+#                            [--https-port N] [--no-psiphon|--psiphon] [--psiphon-args "..."]
 #                            [--skip-hardening] [--icmp-drop] [--ssh-port N]
 #                            [--allow-port 8443[/tcp|/udp]]...
 #                            [--traffic-control|--no-traffic-control] [--admin-ip IP]...
@@ -19,15 +20,25 @@
 #
 # Переустанавливает Remnawave Node (docker, /opt/remnanode), спрашивая SECRET_KEY и т. д.
 # Профиль Xray задаётся в Remnawave: переключите профиль ноды на XHTTP
-# (слушает 127.0.0.1:<xray-port>, security none) — скрипт ждёт освобождения
-# порта 443 и затем включает TLS-фронт. Готовый профиль выводится в конце установки.
+# (слушает 127.0.0.1:<xray-port>, security none) — скрипт ждёт, пока он применится,
+# и затем включает TLS-фронт на HTTPS-порту (по умолчанию случайный свободный, не 443; --https-port N).
+# Готовый профиль выводится в конце установки. Psiphon (egress для Gemini) ставится сразу: --no-psiphon — пропустить.
 set -euo pipefail
 
-VERSION=1.5.1
+VERSION=1.6.0
 CONF_FILE=/etc/goji-node/install.conf
 DOMAIN=""
 EMAIL=""
 XRAY_PORT=10443
+# Публичный HTTPS-порт nginx. Пусто = сохранённый (переустановка; у установок до 1.6.0 это 443)
+# или случайный свободный (новая установка): 443 по умолчанию не используется.
+HTTPS_PORT=""
+# Psiphon (vps-psiphon): "" = авто (новая установка: да; переустановка: как раньше), 1 = --psiphon, 0 = --no-psiphon
+PSIPHON_MODE=""
+PSIPHON_ARGS=""
+PSIPHON_PORT=""
+PSIPHON_FORCE=0    # --psiphon: переустановить Psiphon, даже если он уже стоит
+PSIPHON_ENV=/etc/default/vps-psiphon
 # Путь XHTTP: пусто = сохранённый (переустановка) или случайный (новая установка); random = новый случайный.
 # Общий для всех путь из публичного репозитория позволял найти ноду, просто запросив его.
 XPATH=""
@@ -224,12 +235,12 @@ gjm_dot() { # gjm_dot ok|warn|fail|off <подпись>
 gjm_status() {
   [[ -r $GOJI_ETC/install.conf ]] || return 0
   gjm_init
-  local ng=fail p443=warn xr=warn nd=off uf=off line
+  local ng=fail p443=warn xr=warn nd=off uf=off hp=443 line
   # shellcheck disable=SC1091
   line=$(
     . "$GOJI_ETC/install.conf" 2>/dev/null || true
     ng=fail; systemctl is-active --quiet nginx 2>/dev/null && ng=ok
-    p443=warn; ss -Hltn 'sport = :443' 2>/dev/null | grep -q . && p443=ok
+    p443=warn; ss -Hltn "sport = :${GOJI_HTTPS_PORT:-443}" 2>/dev/null | grep -q . && p443=ok
     xr=warn; ss -Hltn "sport = :${GOJI_XRAY_PORT:-10443}" 2>/dev/null | grep -q . && xr=ok
     nd=off
     if [[ -n ${GOJI_NODE_PORT:-} ]] && command -v docker >/dev/null 2>&1; then
@@ -237,11 +248,11 @@ gjm_status() {
     fi
     uf=off
     if command -v ufw >/dev/null 2>&1; then uf=warn; ufw status 2>/dev/null | grep -q "Status: active" && uf=ok; fi
-    echo "${GOJI_DOMAIN:-?} $ng $p443 $xr $nd $uf"
+    echo "${GOJI_DOMAIN:-?} $ng $p443 $xr $nd $uf ${GOJI_HTTPS_PORT:-443}"
   ) || true
-  read -r dom ng p443 xr nd uf <<< "${line:-? off off off off off}"
+  read -r dom ng p443 xr nd uf hp <<< "${line:-? off off off off off 443}"
   printf '  %sДомен%s  %s%s%s\n' "$GM_D" "$GM_R" "$GM_B" "$dom" "$GM_R"
-  printf '  %s   %s   %s   %s   %s\n' "$(gjm_dot "$ng" nginx)" "$(gjm_dot "$p443" 'HTTPS :443')" \
+  printf '  %s   %s   %s   %s   %s\n' "$(gjm_dot "$ng" nginx)" "$(gjm_dot "$p443" "HTTPS :$hp")" \
     "$(gjm_dot "$xr" Xray)" "$(gjm_dot "$nd" Нода)" "$(gjm_dot "$uf" UFW)"
 }
 gjm_pause() { read -r -p "  ${GM_D}Enter — вернуться в меню${GM_R} " _ || true; }
@@ -252,6 +263,7 @@ gjc_load() {
   [[ -r $GOJI_ETC/install.conf ]] || { echo "Нет сохранённой установки ($GOJI_ETC/install.conf). Сначала запустите install.sh." >&2; return 1; }
   # shellcheck disable=SC1090,SC1091
   . "$GOJI_ETC/install.conf"
+  GOJI_HTTPS_PORT=${GOJI_HTTPS_PORT:-443}   # установки до 1.6.0 слушали 443
   GJ_FAIL=0; GJ_PENDING=0; GJ_WARN=0; GJ_NOK=0; GJ_NBAD=0
   GJ_LIVE="/etc/letsencrypt/live/$GOJI_DOMAIN"
 }
@@ -274,28 +286,28 @@ goji_tpl_desc() {
   esac
 }
 
-# Причина, по которой HTTPS на :443 не отвечает кодом 200 (для понятного отчёта).
-gjc_why443() {
-  local code=$1 l err
-  l=$(ss -Hltnp 'sport = :443' 2>/dev/null | head -1)
+# Причина, по которой HTTPS на своём порту не отвечает кодом 200 (для понятного отчёта).
+gjc_whyport() {
+  local code=$1 l err P=$GOJI_HTTPS_PORT
+  l=$(ss -Hltnp "sport = :$P" 2>/dev/null | head -1)
   if [[ -z $l ]]; then
     if ! ss -Hltn "sport = :$GOJI_XRAY_PORT" 2>/dev/null | grep -q .; then
       echo "TLS-фронт ещё не включён: профиль XHTTP не применён в Remnawave (профиль: goji-node profile, затем goji-node fix)"
     else
-      echo "на :443 никто не слушает, хотя профиль XHTTP активен (исправить: goji-node fix)"
+      echo "на :$P никто не слушает, хотя профиль XHTTP активен (исправить: goji-node fix)"
     fi
     return
   fi
-  if ! grep -q nginx <<< "$l"; then echo "порт :443 занят не nginx: $(grep -o 'users:.*' <<< "$l" | head -1)"; return; fi
+  if ! grep -q nginx <<< "$l"; then echo "порт :$P занят не nginx: $(grep -o 'users:.*' <<< "$l" | head -1)"; return; fi
   if [[ -n $code && $code != 000 ]]; then echo "HTTP $code"; return; fi
-  err=$(curl -sS -o /dev/null --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>&1 | tail -1)
-  echo "nginx слушает :443, но запрос не прошёл: ${err:-нет ответа}"
+  err=$(curl -sS -o /dev/null --max-time 8 --resolve "$GOJI_DOMAIN:$P:127.0.0.1" "https://$GOJI_DOMAIN:$P/" 2>&1 | tail -1)
+  echo "nginx слушает :$P, но запрос не прошёл: ${err:-нет ответа}"
 }
 
 # Чужой SNI: на запрос с именем чужого сайта сервер не должен отвечать его сертификатом
 # (так ведёт себя REALITY; провайдеры, например Astra VPS, требуют только собственный домен).
 gjc_sni() {
-  local port=${GOJI_SNI_PORT:-443} out pem
+  local port=${GOJI_SNI_PORT:-$GOJI_HTTPS_PORT} out pem
   command -v openssl >/dev/null || return 0
   if ! ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; then
     gj_row warn "Чужой SNI (www.apple.com)" "не проверен: на :$port никто не слушает"; return 0
@@ -333,15 +345,15 @@ gjc_web() {
     gj_row warn "Продление сертификата" "конфигурация webroot не найдена"
   fi
 
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>/dev/null || true)
-  if [[ $code == 200 ]]; then gj_row ok "HTTPS :443, сайт-заглушка" "HTTP 200"; else
-    if ! ss -Hltn 'sport = :443' 2>/dev/null | grep -q . && ! ss -Hltn "sport = :$GOJI_XRAY_PORT" 2>/dev/null | grep -q .; then
-      gj_row warn "HTTPS :443, сайт-заглушка" "$(gjc_why443 "$code")"; GJ_PENDING=1
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:$GOJI_HTTPS_PORT:127.0.0.1" "https://$GOJI_DOMAIN:$GOJI_HTTPS_PORT/" 2>/dev/null || true)
+  if [[ $code == 200 ]]; then gj_row ok "HTTPS :$GOJI_HTTPS_PORT, сайт-заглушка" "HTTP 200"; else
+    if ! ss -Hltn "sport = :$GOJI_HTTPS_PORT" 2>/dev/null | grep -q . && ! ss -Hltn "sport = :$GOJI_XRAY_PORT" 2>/dev/null | grep -q .; then
+      gj_row warn "HTTPS :$GOJI_HTTPS_PORT, сайт-заглушка" "$(gjc_whyport "$code")"; GJ_PENDING=1
     else
-      gj_row fail "HTTPS :443, сайт-заглушка" "$(gjc_why443 "$code")"; GJ_FAIL=1
+      gj_row fail "HTTPS :$GOJI_HTTPS_PORT, сайт-заглушка" "$(gjc_whyport "$code")"; GJ_FAIL=1
     fi
   fi
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/goji-check-nope" 2>/dev/null || true)
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:$GOJI_HTTPS_PORT:127.0.0.1" "https://$GOJI_DOMAIN:$GOJI_HTTPS_PORT/goji-check-nope" 2>/dev/null || true)
   if [[ $code == 404 ]]; then gj_row ok "Неизвестный путь" "HTTP 404"; else gj_row warn "Неизвестный путь" "$([[ -z $code || $code == 000 ]] && echo нет ответа || echo "HTTP $code"), ожидался 404"; fi
   if [[ -f $GOJI_WEBROOT/.template ]]; then gj_row ok "Заглушка" "$(cat "$GOJI_WEBROOT/.template") — $(goji_tpl_desc "$(cat "$GOJI_WEBROOT/.template")")"; else gj_row warn "Заглушка" "не определена"; fi
   gjc_sni
@@ -370,6 +382,15 @@ gjc_node() {
     if ss -Hltn "sport = :$GOJI_NODE_PORT" 2>/dev/null | grep -q .; then gj_row ok "API ноды :$GOJI_NODE_PORT" "слушает"; else gj_row warn "API ноды :$GOJI_NODE_PORT" "порт не слушается"; fi
   else
     gj_row warn "Remnawave Node (docker)" "не устанавливался этим скриптом (--skip-node)"
+  fi
+  if [[ ${GOJI_PSIPHON:-0} -eq 1 || -r /etc/default/vps-psiphon ]]; then
+    v=$(sed -n 's/^SOCKS_PORT=//p' /etc/default/vps-psiphon 2>/dev/null | head -1); v=${v:-${GOJI_PSIPHON_PORT:-?}}
+    if systemctl is-active --quiet vps-psiphon.service 2>/dev/null; then
+      if ss -Hltn "sport = :$v" 2>/dev/null | grep -q .; then gj_row ok "Psiphon (egress для Gemini)" "служба работает, SOCKS5 слушает :$v (команда: vps-psiphon status)"
+      else gj_row warn "Psiphon (egress для Gemini)" "служба запущена, но :$v не слушается — туннель ещё поднимается? vps-psiphon logs"; fi
+    else
+      gj_row warn "Psiphon (egress для Gemini)" "служба vps-psiphon не запущена: домены Gemini идут напрямую (vps-psiphon status; bash install.sh --resume --psiphon)"
+    fi
   fi
 }
 
@@ -580,17 +601,17 @@ goji_fix() {
     gjf_do "Автопродление (certbot.timer)" systemctl enable --now certbot.timer || true
   fi
 
-  # 5. порт 443 и профиль XHTTP
-  l=$(ss -Hltnp 'sport = :443' 2>/dev/null | head -1)
+  # 5. HTTPS-порт и профиль XHTTP
+  l=$(ss -Hltnp "sport = :$GOJI_HTTPS_PORT" 2>/dev/null | head -1)
   if [[ -n $l ]] && ! grep -q nginx <<< "$l"; then
-    gjf_manual "Порт 443 занят не nginx: $(grep -o 'users:.*' <<< "$l" | head -1)" \
-      "остановите этот сервис или перенесите его на другой порт (например 8443), затем goji-node fix. Чужой сервис скрипт не трогает."
+    gjf_manual "Порт $GOJI_HTTPS_PORT занят не nginx: $(grep -o 'users:.*' <<< "$l" | head -1)" \
+      "остановите этот сервис или выберите другой HTTPS-порт (bash install.sh --resume --https-port N, затем обновите host в Remnawave). Чужой сервис скрипт не трогает."
   elif (( ! xh )); then
     gj_row warn "Профиль XHTTP" "не применён в Remnawave: на 127.0.0.1:$GOJI_XRAY_PORT никто не слушает"
     echo "      → покажите профиль (goji-node profile), вставьте его в Remnawave, назначьте ноде, затем goji-node fix"
     GJF_MANUAL=$((GJF_MANUAL + 1))
   elif [[ -z $l ]]; then
-    gjf_resume "TLS-фронт nginx не включён (профиль XHTTP активен, порт 443 свободен)"
+    gjf_resume "TLS-фронт nginx не включён (профиль XHTTP активен, порт $GOJI_HTTPS_PORT свободен)"
   fi
 
   # 6. сайт-заглушка
@@ -661,7 +682,9 @@ goji_show_settings() {
   gj_kv "Дата установки/обновления" "$(date -r "$GOJI_ETC/install.conf" '+%Y-%m-%d %H:%M' 2>/dev/null || echo ?)"
   gj_kv "Домен" "$GOJI_DOMAIN"
   gj_kv "E-mail Let's Encrypt" "${GOJI_EMAIL:-не задан}"
+  gj_kv "HTTPS-порт (nginx, публичный)" "$GOJI_HTTPS_PORT$([[ $GOJI_HTTPS_PORT == 443 ]] && echo ' (прежний; сменить: --resume --https-port N)')"
   gj_kv "Xray: порт / путь XHTTP" "127.0.0.1:$GOJI_XRAY_PORT  $GOJI_XPATH"
+  gj_kv "Psiphon (egress для Gemini)" "$([[ ${GOJI_PSIPHON:-0} -eq 1 ]] && echo "да, SOCKS на docker0, порт ${GOJI_PSIPHON_PORT:-?}" || echo 'нет (--psiphon)')"
   gj_kv "Сайт-заглушка" "${tpl:-не определена}${tpl:+ — $(goji_tpl_desc "$tpl")}"
   gj_kv "Remnawave Node" "$([[ ${GOJI_SKIP_NODE:-0} -eq 1 ]] && echo 'не устанавливалась (--skip-node)' || echo "порт API :${GOJI_NODE_PORT:-?}")"
   gj_kv "IP панели (для порта ноды)" "${GOJI_PANEL_IP:-не задан}"
@@ -698,14 +721,27 @@ goji_render_profile() {
   [[ -r $f ]] || { declare -F install_profile_file >/dev/null && install_profile_file; }
   [[ -r $f ]] || { echo "Нет файла профиля $f (запустите install.sh --resume)" >&2; return 1; }
   command -v python3 >/dev/null || { echo "Нужен python3 (apt-get install python3-minimal)" >&2; return 1; }
+  # Адрес и порт Psiphon берутся из того, что реально поставил vps-psiphon (иначе — из сохранённых настроек).
+  local pb="" pp="" pe=/etc/default/vps-psiphon
+  if [[ -r $pe ]]; then
+    pb=$(sed -n 's/^BIND=//p' "$pe" | head -1 | tr -d "'\"")
+    pp=$(sed -n 's/^SOCKS_PORT=//p' "$pe" | head -1 | tr -d "'\"")
+  fi
+  [[ -n $pp ]] || pp=${GOJI_PSIPHON_PORT:-}
   python3 -c '
 import json, sys
 cfg = json.load(open(sys.argv[1], encoding="utf-8"))
 ib = cfg["inbounds"][0]
 ib["port"] = int(sys.argv[2])
 ib["streamSettings"]["xhttpSettings"]["path"] = sys.argv[3]
+for ob in cfg["outbounds"]:
+    if ob.get("tag") == "psiphon-out":
+        if sys.argv[4]:
+            ob["settings"]["address"] = sys.argv[4]
+        if sys.argv[5].isdigit():
+            ob["settings"]["port"] = int(sys.argv[5])
 print(json.dumps(cfg, indent=2, ensure_ascii=False))
-' "$f" "$GOJI_XRAY_PORT" "$GOJI_XPATH"
+' "$f" "$GOJI_XRAY_PORT" "$GOJI_XPATH" "$pb" "$pp"
 }
 
 # Готовый профиль для вставки в Remnawave: Config Profiles → создать → вставить JSON.
@@ -722,7 +758,7 @@ goji_show_profile() {
   cat "$out"
   echo "----------------8<----------------  конец  ----------------8<----------------"
   echo "Дальше: Nodes → ваша нода → Config Profile → этот профиль, inbound XHTTP-TLS;"
-  echo "Hosts → Create → inbound XHTTP-TLS, адрес $GOJI_DOMAIN, порт 443, Network xhttp,"
+  echo "Hosts → Create → inbound XHTTP-TLS, адрес $GOJI_DOMAIN, порт $GOJI_HTTPS_PORT, Network xhttp,"
   echo "path $GOJI_XPATH, mode auto, Security tls, SNI $GOJI_DOMAIN, ALPN h2, Fingerprint firefox."
   echo "Показать снова: goji-node profile"
 }
@@ -938,12 +974,12 @@ goji_decoy() {
   if [[ $name == random ]]; then name=$(ls "$dir" | shuf -n 1); fi
   goji_decoy_backup
   goji_deploy_decoy "$name" "$dir" || return 1
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:443:127.0.0.1" "https://$GOJI_DOMAIN/" 2>/dev/null || true)
-  echo "Заглушка «$name» установлена. Проверка https://$GOJI_DOMAIN/ → HTTP ${code:-нет ответа}. Вернуть прежнюю: goji-node decoy --undo"
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$GOJI_DOMAIN:$GOJI_HTTPS_PORT:127.0.0.1" "https://$GOJI_DOMAIN:$GOJI_HTTPS_PORT/" 2>/dev/null || true)
+  echo "Заглушка «$name» установлена. Проверка https://$GOJI_DOMAIN:$GOJI_HTTPS_PORT/ → HTTP ${code:-нет ответа}. Вернуть прежнюю: goji-node decoy --undo"
 }
 
 # ---- удаление компонентов установки -------------------------------------------------------
-GJU_KEYS=(site cert node ping guard tuning ssh fail2ban ufw tools)
+GJU_KEYS=(site cert node psiphon ping guard tuning ssh fail2ban ufw tools)
 
 gju_desc() {
   case "$1" in
@@ -955,7 +991,8 @@ gju_desc() {
     tuning)   echo "Тюнинг: sysctl, tc fq, ZRAM-swap (BBR/fq и др.)" ;;
     ssh)      echo "Усиление SSH (файлы sshd_config.d/00-goji-hardening.conf и 00-goji-keys-only.conf — вход по паролю снова разрешится)" ;;
     fail2ban) echo "Fail2ban: jail sshd/recidive от Goji (пакет остаётся)" ;;
-    ufw)      echo "Правила UFW установщика: 80, 443, порт ноды, доп. порты (SSH и политика по умолчанию не трогаются)" ;;
+    ufw)      echo "Правила UFW установщика: 80, HTTPS-порт, порт ноды, доп. порты (SSH и политика по умолчанию не трогаются)" ;;
+    psiphon)  echo "Psiphon (vps-psiphon: контейнер, образ, службы; правило Gemini в профиле уйдёт на прямой выход)" ;;
     tools)    echo "Команда goji-node, сохранённые настройки и шаблоны (/etc/goji-node, /usr/share/goji-node)" ;;
   esac
 }
@@ -999,6 +1036,13 @@ gju_do() {
       rm -rf /etc/goji-guard /var/lib/goji-guard
       systemctl daemon-reload >/dev/null 2>&1 || true
       gj_row ok "Traffic Control" "удалён, блокировки сняты" ;;
+    psiphon)
+      if [[ -x /usr/local/sbin/vps-psiphon ]]; then
+        if /usr/local/sbin/vps-psiphon uninstall >/dev/null 2>&1; then
+          sed -i 's/^GOJI_PSIPHON=.*/GOJI_PSIPHON=0/' "$GOJI_ETC/install.conf" 2>/dev/null || true
+          gj_row ok "Psiphon" "удалён; outbound psiphon-out в профиле Remnawave больше не нужен (правило Gemini идёт напрямую)"
+        else gj_row warn "Psiphon" "vps-psiphon uninstall завершился с ошибкой — выполните его вручную"; fi
+      else gj_row ok "Psiphon" "не был установлен"; fi ;;
     tuning)
       systemctl disable --now goji-tc.service goji-zram.service >/dev/null 2>&1 || true
       rm -f /etc/systemd/system/goji-tc.service /etc/systemd/system/goji-zram.service /usr/local/sbin/goji-tc.sh /usr/local/sbin/goji-zram.sh \
@@ -1022,7 +1066,7 @@ gju_do() {
     ufw)
       if command -v ufw >/dev/null 2>&1; then
         ufw --force delete allow 80/tcp >/dev/null 2>&1 || true
-        ufw --force delete allow 443/tcp >/dev/null 2>&1 || true
+        ufw --force delete allow "${GOJI_HTTPS_PORT:-443}/tcp" >/dev/null 2>&1 || true
         if [[ -n ${GOJI_NODE_PORT:-} ]]; then
           [[ -n ${GOJI_PANEL_IP:-} ]] && { ufw --force delete allow from "$GOJI_PANEL_IP" to any port "$GOJI_NODE_PORT" proto tcp >/dev/null 2>&1 || true; }
           ufw --force delete allow "$GOJI_NODE_PORT/tcp" >/dev/null 2>&1 || true
@@ -1304,6 +1348,12 @@ goji_main() {
 
 # Встроенные данные: профиль Remnawave и шаблоны сайтов. Нужны и при установке, и в меню на сервере,
 # который ставился старой версией (файлов в /usr/share/goji-node там ещё нет).
+# Psiphon: vps-psiphon (MIT, Chara Freedom) без изменений, см. xhttp-tls/psiphon/. Записывается в $GOJI_SHARE.
+install_psiphon_file() {
+  mkdir -p "$GOJI_SHARE"
+  echo "__PSIPHON_B64__" | base64 -d > "$GOJI_SHARE/psiphon_install.sh"
+  chmod 700 "$GOJI_SHARE/psiphon_install.sh"
+}
 install_profile_file() {
   mkdir -p "$GOJI_SHARE"
   echo "__PROFILE_B64__" | base64 -d > "$GOJI_SHARE/xray-node-profile.json"
@@ -1333,6 +1383,8 @@ load_resume() {
   SKIP_NODE=${GOJI_SKIP_NODE:-0}; HARDEN=${GOJI_HARDEN:-1}; ICMP_DROP=${GOJI_ICMP_DROP:-0}; GUARD_MODE=${GOJI_GUARD:-0}; UPGRADE_MODE=${GOJI_UPGRADE:-0}
   KEYS_MODE=${GOJI_SSH_KEYS_ONLY:-0}
   PANEL_PROFILE=${GOJI_PANEL_PROFILE:-$PANEL_PROFILE}
+  HTTPS_PORT=${GOJI_HTTPS_PORT:-443}        # установки до 1.6.0 слушали 443
+  PSIPHON_MODE=${GOJI_PSIPHON:-}; PSIPHON_PORT=${GOJI_PSIPHON_PORT:-}
   read -ra ADMIN_IPS <<< "${GOJI_ADMIN_IPS:-}"
   read -ra EXTRA_PORTS <<< "${GOJI_EXTRA_PORTS:-}"
 }
@@ -1342,6 +1394,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --email)     EMAIL="$2"; shift 2 ;;
     --xray-port) XRAY_PORT="$2"; shift 2 ;;
+    --https-port) HTTPS_PORT="$2"; shift 2 ;;
+    --psiphon)    PSIPHON_MODE=1; PSIPHON_FORCE=1; shift ;;
+    --no-psiphon) PSIPHON_MODE=0; shift ;;
+    --psiphon-args) PSIPHON_ARGS="$2"; shift 2 ;;
     --path)      XPATH="$2"; shift 2 ;;
     --wait)      WAIT="$2"; shift 2 ;;
     --secret-key) SECRET_KEY="$2"; shift 2 ;;
@@ -1365,7 +1421,7 @@ while [[ $# -gt 0 ]]; do
     --yes)          UPD_ARGS+=(--yes); shift ;;
     --no-update-check) NO_UPD=1; shift ;;
     --resume|--check|--fix|--settings|--uninstall) shift ;;
-    -h|--help)   sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,25p' "$0"; exit 0 ;;
     -*)          die "неизвестный параметр: $1" ;;
     *)           DOMAIN="$1"; shift ;;
   esac
@@ -1702,6 +1758,59 @@ if [[ -z "$UPGRADE_MODE" ]]; then
 fi
 UPGRADE_ON=$UPGRADE_MODE
 
+# ---------------------------------------------------------------- публичный HTTPS-порт и Psiphon
+# Свободный порт из диапазона ниже эфемерных (32768+), чтобы исходящие соединения сервера его не заняли.
+gen_free_port() {
+  local p i
+  for ((i = 0; i < 200; i++)); do
+    p=$(shuf -i 20000-32000 -n 1)
+    ss -Hltn "sport = :$p" | grep -q . && continue
+    [[ $p == "$XRAY_PORT" || $p == "${NODE_PORT:-}" || $p == "${SSH_PORT:-}" || $p == "${HTTPS_PORT:-}" || $p == "${PSIPHON_PORT:-}" ]] && continue
+    echo "$p"; return 0
+  done
+  return 1
+}
+HTTPS_PORT_OLD=""
+# shellcheck disable=SC1090
+[[ -r $CONF_FILE ]] && HTTPS_PORT_OLD=$(. "$CONF_FILE" 2>/dev/null; echo "${GOJI_HTTPS_PORT:-443}")
+HTTPS_PORT_NEW=0
+[[ -n $HTTPS_PORT ]] || HTTPS_PORT=$HTTPS_PORT_OLD       # переустановка: клиенты и host в Remnawave уже знают порт
+if [[ -z $HTTPS_PORT ]]; then
+  HTTPS_PORT=$(gen_free_port) || die "не нашёл свободный порт для HTTPS; задайте --https-port N"
+  HTTPS_PORT_NEW=1
+fi
+[[ $HTTPS_PORT =~ ^[0-9]+$ ]] && (( HTTPS_PORT >= 1 && HTTPS_PORT <= 65535 )) || die "--https-port должен быть числом от 1 до 65535"
+[[ $HTTPS_PORT != 80 ]] || die "порт 80 нужен certbot и редиректу — выберите другой HTTPS-порт"
+[[ $HTTPS_PORT != "$XRAY_PORT" ]] || die "--https-port совпадает с --xray-port ($XRAY_PORT)"
+[[ -z $NODE_PORT || $HTTPS_PORT != "$NODE_PORT" ]] || die "--https-port совпадает с NODE_PORT ($NODE_PORT)"
+[[ -z $SSH_PORT || $HTTPS_PORT != "$SSH_PORT" ]] || die "--https-port совпадает с портом SSH ($SSH_PORT)"
+if (( HTTPS_PORT_NEW )); then
+  info "HTTPS-порт: $HTTPS_PORT (случайный свободный; 443 не используется; другой: --https-port N)"
+elif [[ -n $HTTPS_PORT_OLD && $HTTPS_PORT != "$HTTPS_PORT_OLD" ]]; then
+  warn "HTTPS-порт меняется: $HTTPS_PORT_OLD → $HTTPS_PORT. Обновите порт в host Remnawave (покажу ниже), иначе клиенты не подключатся"
+elif [[ $HTTPS_PORT == 443 ]]; then
+  info "HTTPS-порт 443 ($([[ -n $HTTPS_PORT_OLD ]] && echo 'прежний' || echo 'задан явно')); сменить: bash install.sh --resume --https-port N"
+else
+  info "HTTPS-порт: $HTTPS_PORT"
+fi
+
+# Psiphon: новая установка — ставим; уже стоящий vps-psiphon не трогаем (кроме --psiphon); переустановка
+# сервера, поставленного до 1.6.0, Psiphon сама не добавляет (--psiphon).
+PSIPHON_ADOPT=0
+if [[ $PSIPHON_MODE != 0 && -r $PSIPHON_ENV && $PSIPHON_FORCE -eq 0 ]]; then
+  PSIPHON_MODE=1; PSIPHON_ADOPT=1
+elif [[ -z $PSIPHON_MODE ]]; then
+  if [[ -r $CONF_FILE ]]; then PSIPHON_MODE=0; else PSIPHON_MODE=1; fi
+fi
+PSIPHON_ON=$PSIPHON_MODE
+if (( PSIPHON_ON )); then
+  if [[ -r $PSIPHON_ENV ]]; then
+    v=$(sed -n 's/^SOCKS_PORT=//p' "$PSIPHON_ENV" | head -1 | tr -d "'\""); [[ $v =~ ^[0-9]+$ ]] && PSIPHON_PORT=$v
+  fi
+  [[ -n $PSIPHON_PORT ]] || PSIPHON_PORT=$(gen_free_port) || die "не нашёл свободный порт для Psiphon"
+  [[ $PSIPHON_PORT != "$HTTPS_PORT" ]] || die "порт Psiphon совпадает с HTTPS-портом"
+fi
+
 save_conf() {
   mkdir -p /etc/goji-node
   {
@@ -1710,6 +1819,9 @@ save_conf() {
     printf 'GOJI_DOMAIN=%q\n' "$DOMAIN"
     printf 'GOJI_EMAIL=%q\n' "$EMAIL"
     printf 'GOJI_XRAY_PORT=%q\n' "$XRAY_PORT"
+    printf 'GOJI_HTTPS_PORT=%q\n' "$HTTPS_PORT"
+    printf 'GOJI_PSIPHON=%q\n' "$PSIPHON_ON"
+    printf 'GOJI_PSIPHON_PORT=%q\n' "$PSIPHON_PORT"
     printf 'GOJI_XPATH=%q\n' "$XPATH"
     printf 'GOJI_NODE_PORT=%q\n' "$NODE_PORT"
     printf 'GOJI_PANEL_IP=%q\n' "$PANEL_IP"
@@ -1795,6 +1907,7 @@ chown -R www-data:www-data "$ACME" 2>/dev/null || true
 
 # ---------------------------------------------------------------- nginx :80
 rm -f /etc/nginx/sites-enabled/default
+SITE_URL=$DOMAIN; [[ $HTTPS_PORT -eq 443 ]] || SITE_URL=$DOMAIN:$HTTPS_PORT
 cat > "$ACME_CONF" <<EOF
 server {
     listen 80 default_server;
@@ -1807,7 +1920,7 @@ server {
     }
 
     location / {
-        return 301 https://$DOMAIN\$request_uri;
+        return 301 https://$SITE_URL\$request_uri;
     }
 }
 EOF
@@ -1826,8 +1939,8 @@ systemctl enable --now nginx >/dev/null
 systemctl reload nginx
 
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
-  ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null
-  ok "ufw: порты 80/tcp и 443/tcp открыты"
+  ufw allow 80/tcp >/dev/null; ufw allow "$HTTPS_PORT/tcp" >/dev/null
+  ok "ufw: порты 80/tcp и $HTTPS_PORT/tcp открыты"
 fi
 
 # ---------------------------------------------------------------- certificate
@@ -1946,9 +2059,32 @@ else
   fi
 fi
 
-if ! ss -Hltn "sport = :1080" | grep -q .; then
-  warn "На :1080 никто не слушает — Psiphon не работает; Gemini пойдёт напрямую (профиль переключится сам)"
-fi
+# ---------------------------------------------------------------- psiphon
+# Egress для доменов Gemini (правило и balancer в профиле): SOCKS5 на адресе docker0, порт свой (не 1080).
+# Лучшее из возможного: сбой Psiphon установку не прерывает — balancer профиля уходит на DIRECT.
+install_psiphon() {
+  if (( ! PSIPHON_ON )); then info "Psiphon не устанавливается (--no-psiphon); домены Gemini пойдут напрямую"; return 0; fi
+  if (( PSIPHON_ADOPT )); then
+    ok "Psiphon уже установлен (vps-psiphon), SOCKS5 :$PSIPHON_PORT — не трогаю (переустановить: --psiphon)"; return 0
+  fi
+  if ! command -v docker >/dev/null; then
+    info "Устанавливаю Docker (нужен для Psiphon)"
+    curl -fsSL https://get.docker.com | sh >/dev/null || { warn "не удалось установить Docker — Psiphon пропущен (позже: bash install.sh --resume --psiphon)"; return 0; }
+  fi
+  local args=(--socks-port "$PSIPHON_PORT" --no-http) extra=()
+  if [[ -n $PSIPHON_ARGS ]]; then read -ra extra <<< "$PSIPHON_ARGS"; args+=("${extra[@]}"); fi
+  install_psiphon_file
+  info "Устанавливаю Psiphon (vps-psiphon): SOCKS5 на адресе docker0, порт $PSIPHON_PORT, HTTP-прокси не публикуется"
+  if bash "$GOJI_SHARE/psiphon_install.sh" "${args[@]}"; then
+    local v
+    v=$(sed -n 's/^SOCKS_PORT=//p' "$PSIPHON_ENV" 2>/dev/null | head -1)
+    if [[ $v =~ ^[0-9]+$ && $v != "$PSIPHON_PORT" ]]; then PSIPHON_PORT=$v; save_conf; fi
+    ok "Psiphon установлен; профиль Remnawave берёт адрес и порт отсюда (goji-node profile)"
+  else
+    warn "установка Psiphon не удалась — продолжаю без него: Gemini пойдёт напрямую. Повтор: bash install.sh --resume --psiphon"
+  fi
+}
+install_psiphon
 
 # ---------------------------------------------------------------- hardening & tuning
 # UFW, Fail2ban, ZRAM, BBR + fq, tc (fq on the uplink), sysctl tuning and
@@ -2139,7 +2275,11 @@ EOF
     fi
     for p in "${ssh_ports[@]}"; do ufw allow "$p/tcp" >/dev/null; done
     ufw allow 80/tcp >/dev/null
-    ufw allow 443/tcp >/dev/null
+    ufw allow "$HTTPS_PORT/tcp" >/dev/null
+    # прежний нестандартный HTTPS-порт больше не нужен (443 не трогаем: он может служить другому профилю)
+    if [[ -n $HTTPS_PORT_OLD && $HTTPS_PORT_OLD != 443 && $HTTPS_PORT_OLD != "$HTTPS_PORT" ]]; then
+      ufw --force delete allow "$HTTPS_PORT_OLD/tcp" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$np" ]]; then
       if [[ -n "$PANEL_IP" ]]; then
         ufw allow from "$PANEL_IP" to any port "$np" proto tcp >/dev/null
@@ -2172,7 +2312,7 @@ EOF
       ufw --force enable >/dev/null || warn "не удалось включить ufw"
     fi
     if ufw status | grep -q "Status: active"; then
-      ok "ufw включён (ssh: ${ssh_ports[*]}, 80, 443$([[ -n "$np" ]] && echo ", $np"))"
+      ok "ufw включён (ssh: ${ssh_ports[*]}, 80, $HTTPS_PORT$([[ -n "$np" ]] && echo ", $np"))"
     fi
   fi
 
@@ -2762,7 +2902,7 @@ install_check_command() {
     echo '#!/usr/bin/env bash'
     echo 'export LC_ALL=C.UTF-8'
     declare -p GOJI_ETC GOJI_SHARE GOJI_WEBROOT GJU_KEYS VERSION GOJI_REPO GOJI_BRANCH
-    declare -f gj_msg gj_cols gj_wrap gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_brand gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_why443 gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
+    declare -f gj_msg gj_cols gj_wrap gj_row gj_title gjm_init gjm_rule gjm_header gjm_grad gjm_banner gjm_brand gjm_section gjm_item gjm_dot gjm_status gjm_pause gjc_load goji_tpl_desc gjc_whyport gjc_sni gjc_web gjc_node gjc_system gjc_security gjc_summary \
       gj_nodeport_public gj_nodeport_close gjc_nodeport gj_docker_public gj_ufw_allows gjc_docker goji_check gjf_do gjf_manual gjf_resume goji_fix gj_kv goji_show_settings gju_desc gju_do goji_uninstall goji_ports goji_render_profile goji_show_profile goji_deploy_decoy goji_tpl_list \
       goji_tpl_choose goji_decoy_backup goji_decoy_extract goji_decoy_root goji_decoy_import goji_decoy_pull goji_decoy_undo goji_decoy gup_get gup_gt gup_latest gup_off gup_refresh gup_cached gup_notice gup_notes gup_reject gup_install goji_update goji_menu goji_main install_profile_file
     echo '[[ $EUID -eq 0 ]] || { echo "Запустите от root: sudo goji-node" >&2; exit 1; }'
@@ -2814,20 +2954,21 @@ show_profile() {
   PROFILE_SHOWN=1
 }
 
-# ---------------------------------------------------------------- wait for :443
-# Enable nginx on 443 only when the XHTTP profile is really active: Xray listens
-# on 127.0.0.1:$XRAY_PORT and nobody else holds 443. A free 443 alone is not
+# ---------------------------------------------------------------- wait for the HTTPS port
+# Enable nginx on $HTTPS_PORT only when the XHTTP profile is really active: Xray listens
+# on 127.0.0.1:$XRAY_PORT and nobody else holds the port. With the default (random, not 443)
+# port the old profile is not in the way; with an explicit 443 a free port alone is not
 # enough — it is also free for a few seconds while the node container restarts
 # with the old profile, and grabbing it then takes the old inbound down.
 xhttp_up()  { ss -Hltn "sport = :$XRAY_PORT" | grep -q .; }
-foreign443() { ss -Hltnp "sport = :443" | grep -q . && ! ss -Hltnp "sport = :443" | grep -q nginx; }
-ready() { xhttp_up && ! foreign443; }
+foreignport() { ss -Hltnp "sport = :$HTTPS_PORT" | grep -q . && ! ss -Hltnp "sport = :$HTTPS_PORT" | grep -q nginx; }
+ready() { xhttp_up && ! foreignport; }
 if ! ready; then
-  # nginx must not hold 443 while the old profile may still need it
+  # nginx must not hold the port while the old profile may still need it
   rm -f "$CONF"; systemctl reload nginx
-  if foreign443; then
-    warn "Порт 443 занят не nginx: $(ss -Hltnp 'sport = :443' | head -1 | grep -o 'users:.*' | head -1)."
-    echo "    TLS-фронт nginx не сможет занять 443: остановите этот сервис или перенесите его на другой порт."
+  if foreignport; then
+    warn "Порт $HTTPS_PORT занят не nginx: $(ss -Hltnp "sport = :$HTTPS_PORT" | head -1 | grep -o 'users:.*' | head -1)."
+    echo "    TLS-фронт nginx не сможет занять $HTTPS_PORT: остановите этот сервис или выберите другой порт (--https-port N)."
   fi
   if xhttp_up; then
     ok "Профиль XHTTP активен (127.0.0.1:$XRAY_PORT слушает)."
@@ -2839,20 +2980,20 @@ if ! ready; then
     echo "    Переключите профиль этой ноды в Remnawave на XHTTP"
     echo "    (inbound 127.0.0.1:$XRAY_PORT, xhttp, path $XPATH) и обновите хост."
   fi
-  info "Жду готовности (профиль XHTTP и свободный порт 443) до $WAIT с..."
+  info "Жду готовности (профиль XHTTP и свободный порт $HTTPS_PORT) до $WAIT с..."
   for ((i = 0; i < WAIT; i += 5)); do
     ready && break
     sleep 5
   done
   if ! ready; then
-    warn "Условия не выполнены (профиль XHTTP / порт 443). Старый профиль продолжает работать; TLS-фронт nginx ещё не включён."
-    echo "    Когда профиль переключён и порт 443 свободен, выполните:  bash install.sh --resume   (состояние: goji-node)"
+    warn "Условия не выполнены (профиль XHTTP / порт $HTTPS_PORT). Старый профиль продолжает работать; TLS-фронт nginx ещё не включён."
+    echo "    Когда профиль переключён и порт $HTTPS_PORT свободен, выполните:  bash install.sh --resume   (состояние: goji-node)"
     exit 2
   fi
 fi
 
-# ---------------------------------------------------------------- nginx :443
-info "Включаю TLS-фронт"
+# ---------------------------------------------------------------- nginx HTTPS port
+info "Включаю TLS-фронт на порту $HTTPS_PORT"
 # ssl_reject_handshake needs nginx >= 1.19.4; older nginx gets a catch-all that
 # uses the same certificate and closes the connection (return 444).
 NGINX_VER=$(nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9.]*\).*#\1#p')
@@ -2866,14 +3007,14 @@ else
 fi
 cat > "$CONF" <<EOF
 server {
-    listen 443 ssl default_server;
-    listen [::]:443 ssl default_server;
+    listen $HTTPS_PORT ssl default_server;
+    listen [::]:$HTTPS_PORT ssl default_server;
 $DEFAULT_SRV
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen $HTTPS_PORT ssl http2;
+    listen [::]:$HTTPS_PORT ssl http2;
     server_name $DOMAIN;
     server_tokens off;
 
@@ -2917,10 +3058,10 @@ server {
 EOF
 nginx -t -q
 systemctl reload nginx
-ok "nginx отдаёт https://$DOMAIN"
+ok "nginx отдаёт https://$SITE_URL"
 
 # ---------------------------------------------------------------- self-test
-code=$(curl -s -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || true)
+code=$(curl -s -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:$HTTPS_PORT:127.0.0.1" "https://$SITE_URL/" || true)
 [[ "$code" == "200" ]] && ok "Сайт-заглушка: HTTP 200" || warn "Сайт-заглушка ответил HTTP $code"
 if ss -Hltn "sport = :$XRAY_PORT" | grep -q .; then
   ok "Xray XHTTP слушает 127.0.0.1:$XRAY_PORT"
@@ -2934,7 +3075,7 @@ ok "Установка завершена"
 cat <<EOF
 
 Хост в Remnawave для $DOMAIN:
-  адрес / порт : $DOMAIN / 443
+  адрес / порт : $DOMAIN / $HTTPS_PORT
   network      : xhttp      path: $XPATH      mode: auto
   security     : tls        sni : $DOMAIN     alpn: h2
   fingerprint  : firefox    flow: (пусто)

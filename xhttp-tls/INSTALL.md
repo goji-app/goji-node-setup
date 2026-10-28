@@ -1,6 +1,6 @@
 # XHTTP + TLS нода — установка
 
-Схема: клиент → `<домен>:443` (TLS, h2) → nginx →
+Схема: клиент → `<домен>:<HTTPS-порт>` (TLS, h2; порт случайный, не 443, `--https-port N`) → nginx →
 случайный путь XHTTP (свой на каждом сервере, `--path`) → Xray `127.0.0.1:10443` (XHTTP, security none).
 Всё остальное nginx отдаёт как сайт-заглушку.
 
@@ -25,7 +25,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/mai
 - **Auto tuning** — sysctl: буферы, backlog, somaxconn, keepalive, TCP Fast Open, conntrack, rp_filter, отключение redirects/source-route.
 - **tc fq** — `goji-tc.service`: qdisc fq на интерфейсе с маршрутом по умолчанию (не в контейнерах).
 - **ZRAM** — `goji-zram.service`, 50% RAM, zstd (fallback lz4); настройки в `/etc/default/goji-zram` (не в контейнерах).
-- **UFW** — deny incoming / allow outgoing; открыты SSH, 80, 443, порт ноды (только с `--panel-ip`, если он задан; правило «всем» от прежней установки при этом снимается, `goji-node check` помечает его красным, `goji-node fix` убирает) и порты, которые сейчас слушает xray.
+- **UFW** — deny incoming / allow outgoing; открыты SSH, 80, HTTPS-порт (не 443, если не задан явно), порт ноды (только с `--panel-ip`, если он задан; правило «всем» от прежней установки при этом снимается, `goji-node check` помечает его красным, `goji-node fix` убирает) и порты, которые сейчас слушает xray.
   Порты, которые контейнеры Docker публикуют на все адреса (`-p 1080:1080`), UFW не закрывает: Docker ставит свои правила раньше. `goji-node check` показывает такие порты красным, если UFW их не разрешает, и подсказывает привязать их к `127.0.0.1` / `172.17.0.1`; чужие контейнеры скрипт не пересоздаёт.
 - **Fail2ban** — jail `sshd` и `recidive` (`/etc/fail2ban/jail.d/goji.local`), IP панели в игнор-листе.
 - **SSH** — drop-in `/etc/ssh/sshd_config.d/00-goji-hardening.conf`: `MaxAuthTries 4`, `LoginGraceTime 30`, запрет agent/tunnel/X11 forwarding и `GatewayPorts`. Способ входа, `PermitRootLogin` и `AllowTcpForwarding` не меняются: скрипт сравнивает `sshd -T` до и после и при любом расхождении или ошибке откатывает файл (копии в `/var/backups/goji-node`). Если вы ходите через `ssh -A` (agent forwarding), добавьте исключение сами.
@@ -37,6 +37,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/goji-app/goji-node-setup/mai
 
 > Если в профиле Xray есть inbound на порту, отличном от 443, и он не слушался на момент установки — добавьте его через `--allow-port`, иначе UFW его закроет.
 > Скрипт не тестировался на реальном VPS в этой сессии — сначала проверьте на тестовом сервере и держите открытой вторую SSH-сессию.
+
+## Psiphon (egress для Gemini)
+
+На новой установке вместе с нодой ставится [vps-psiphon](psiphon/README.md): Psiphon-клиент в Docker, SOCKS5 на адресе `docker0` (обычно `172.17.0.1`) на **случайном порту** (не 1080), HTTP-прокси не публикуется. Профиль Xray направляет на него домены Gemini и Google AI (balancer с запасным `DIRECT`). Адрес и порт подставляются в профиль автоматически: `goji-node profile`.
+
+- `--no-psiphon` — не ставить; `--psiphon` — поставить или переустановить; `--psiphon-args "--region DE --bulk-test-mb 0"` — свои параметры vps-psiphon.
+- Уже установленный `vps-psiphon` не трогается (используется его порт). Серверы, установленные до 1.6.0, Psiphon сами не получают: `bash install.sh --resume --psiphon`.
+- Управление: `vps-psiphon status|rotate|region <CC>|logs|uninstall`; проверка: `goji-node check node`; удаление через меню удаления (компонент `psiphon`).
+- Только для зарубежного сервера. Образ `swarupsengupta2007/psiphon:latest` сторонний, версия не закреплена; проверки watchdog тратят ~35 ГБ в месяц (`--bulk-test-mb 0` отключает).
 
 ## Обновление ОС
 
@@ -70,7 +79,7 @@ bash install.sh --resume       # повторить установку с сох
 | пустой сайт-заглушка | разворачивает прежний или случайный шаблон |
 | TLS-фронт не включён при активном профиле, нет сертификата, конфиг nginx сломан нашим файлом, UFW выключен | повторный проход установки (`--resume`) с сохранёнными настройками; только в `install.sh --fix` |
 
-Сам **не меняет**: чужой сервис на :443 (печатает, кто занял порт и что сделать), профиль в панели Remnawave (его нужно вставить вручную), чужой конфиг nginx, SSH-доступ.
+Сам **не меняет**: чужой сервис на HTTPS-порту (печатает, кто занял порт и что сделать), профиль в панели Remnawave (его нужно вставить вручную), чужой конфиг nginx, SSH-доступ.
 
 Коды `--check` и самой установки: `0` — всё в порядке; `1` — есть ошибка; `2` — всё установлено, но профиль XHTTP в панели ещё не применён (после переключения профиля запустите `--resume`). `130`/`143` — прерывание (Ctrl+C / TERM). `--resume` не переустанавливает уже работающую ноду и берёт `SECRET_KEY` из существующего compose-файла; параметры `SECRET_KEY` в `install.conf` не хранятся. Параллельный запуск блокируется (`/run/goji-node-setup.lock`).
 
@@ -90,7 +99,7 @@ bash install.sh --resume       # повторить установку с сох
 | Тюнинг | `goji-tc`, `goji-zram`, sysctl-файл и modules-load; значения sysctl и qdisc возвращаются полностью только после перезагрузки |
 | Усиление SSH | удаляется `sshd_config.d/00-goji-hardening.conf`, после `sshd -t` sshd перечитывает конфигурацию |
 | Fail2ban | удаляется `jail.d/goji.local` |
-| Правила UFW | удаляются 80/tcp, 443/tcp, правила порта ноды и `--allow-port`; SSH и политика по умолчанию не трогаются. Скрипт не помнит, какие правила были у вас до установки: если 80/443 нужны другим сервисам, не отмечайте этот пункт |
+| Правила UFW | удаляются 80/tcp, HTTPS-порт, правила порта ноды и `--allow-port`; SSH и политика по умолчанию не трогаются. Скрипт не помнит, какие правила были у вас до установки: если 80 и HTTPS-порт нужны другим сервисам, не отмечайте этот пункт |
 | goji-node и настройки | `/usr/local/sbin/goji-node*`, `/etc/goji-node`, `/usr/share/goji-node` |
 
 Пакеты (nginx, certbot, docker, ufw, fail2ban, nftables, python3) не удаляются, копии в `/var/backups/goji-node` остаются. Без меню: `goji-node uninstall [--yes] [site cert node ping guard tuning ssh fail2ban ufw tools | all]`.
@@ -99,7 +108,7 @@ bash install.sh --resume       # повторить установку с сох
 
 `xray-node-profile.json` — универсальный профиль (inbound `XHTTP-TLS`,
 127.0.0.1:10443). Создать его один раз в панели и назначить нодам.
-Пока на 443 висит старый профиль, скрипт ждёт до 15 минут.
+Пока профиль ноды не переключён на XHTTP (или HTTPS-порт занят чужим сервисом), скрипт ждёт до 15 минут.
 
 В конце установки скрипт **выводит готовый профиль** (JSON с вашими портом и путём): скопируйте всё между линиями «начало» и «конец» в Remnawave → Config Profiles → «+» → вставьте → Save, затем назначьте профиль ноде. Если профиль ещё не активен, JSON выводится до ожидания, чтобы его можно было вставить сразу. Копия: `/etc/goji-node/remnawave-profile.json`; показать снова: `goji-node profile`.
 
@@ -107,7 +116,7 @@ bash install.sh --resume       # повторить установку с сох
 
 | Поле | Значение |
 |---|---|
-| Адрес / порт | <домен> / 443 |
+| Адрес / порт | <домен> / HTTPS-порт из вывода установщика (`goji-node profile`) |
 | Network | xhttp |
 | Path | путь из вывода установщика (`goji-node profile`) |
 | Mode | auto |
