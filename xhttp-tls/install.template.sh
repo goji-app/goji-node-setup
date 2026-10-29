@@ -1208,14 +1208,14 @@ gup_install() { # gup_install <версия> <применить 0|1> <без в
   echo "Скачиваю install.sh $latest…"
   if ! gup_get xhttp-tls/install.sh "$tmp" 120; then rm -f "$tmp"; echo "${GM_RED}Не удалось скачать install.sh.${GM_R}" >&2; return 1; fi
   if (( $(stat -c %s "$tmp") < 500000 )) || ! head -n 1 "$tmp" | grep -q '^#!'; then gup_reject "$tmp" "слишком маленький или не скрипт"; return 1; fi
+  # Контрольная сумма — ДО любого исполнения файла (раньше bash "$tmp" --version запускал
+  # скрипт ДО сверки) и ОБЯЗАТЕЛЬНО: частичный деплой в GitHub (install.sh новый, файл суммы
+  # из кэша/отсутствует) не должен приводить к установке непроверенного скрипта от root.
+  sum=$(gup_get xhttp-tls/install.sh.sha256 - 10 | awk '{print $1}') || sum=""
+  [[ $sum =~ ^[0-9a-f]{64}$ ]] || { gup_reject "$tmp" "файл контрольной суммы недоступен или повреждён — повторите через несколько минут"; return 1; }
+  [[ $(sha256sum "$tmp" | awk '{print $1}') == "$sum" ]] || { gup_reject "$tmp" "контрольная сумма не совпала (возможно, кэш GitHub: повторите через несколько минут)"; return 1; }
   bash -n "$tmp" 2>/dev/null || { gup_reject "$tmp" "ошибка синтаксиса bash"; return 1; }
   [[ $(bash "$tmp" --version 2>/dev/null) == "goji-node-setup $latest" ]] || { gup_reject "$tmp" "версия внутри файла не $latest"; return 1; }
-  sum=$(gup_get xhttp-tls/install.sh.sha256 - 10 | awk '{print $1}') || sum=""
-  if [[ -n $sum ]]; then
-    [[ $(sha256sum "$tmp" | awk '{print $1}') == "$sum" ]] || { gup_reject "$tmp" "контрольная сумма не совпала (возможно, кэш GitHub: повторите через несколько минут)"; return 1; }
-  else
-    echo "  Файл контрольной суммы недоступен — проверка sha256 пропущена."
-  fi
   [[ ! -f $GOJI_SHARE/install.sh ]] || cp -f "$GOJI_SHARE/install.sh" "$GOJI_SHARE/install.sh.prev"
   chmod 755 "$tmp"; mv -f "$tmp" "$GOJI_SHARE/install.sh"
   echo "${GM_GRN}Версия $latest сохранена:${GM_R} $GOJI_SHARE/install.sh (предыдущая — install.sh.prev)"
@@ -1792,6 +1792,23 @@ elif [[ $HTTPS_PORT == 443 ]]; then
   info "HTTPS-порт 443 ($([[ -n $HTTPS_PORT_OLD ]] && echo 'прежний' || echo 'задан явно')); сменить: bash install.sh --resume --https-port N"
 else
   info "HTTPS-порт: $HTTPS_PORT"
+fi
+
+# Те же проверки входа, что для --https-port: опечатки в этих параметрах раньше взрывались
+# ПОЗЖЕ — ufw падал под set -e в середине переустановки, --node-port 80 клал API ноды на
+# порт ACME, а кривой --panel-ip доезжал только до ufw после выпуска сертификата.
+[[ $XRAY_PORT =~ ^[0-9]+$ ]] && (( XRAY_PORT >= 1 && XRAY_PORT <= 65535 )) || die "--xray-port должен быть числом от 1 до 65535"
+[[ $XRAY_PORT != 80 ]] || die "--xray-port 80 конфликтует с ACME — оставьте 10443 или выберите другой"
+[[ $XRAY_PORT != "$HTTPS_PORT" ]] || die "--xray-port совпадает с HTTPS-портом ($HTTPS_PORT)"
+if [[ -n $NODE_PORT ]]; then
+  [[ $NODE_PORT =~ ^[0-9]+$ ]] && (( NODE_PORT >= 1 && NODE_PORT <= 65535 )) || die "--node-port должен быть числом от 1 до 65535"
+  [[ $NODE_PORT != 80 ]] || die "--node-port 80 нужен ACME — выберите другой (обычно 2222)"
+  [[ $NODE_PORT != "$HTTPS_PORT" && $NODE_PORT != "$XRAY_PORT" && ( -z $SSH_PORT || $NODE_PORT != "$SSH_PORT" ) ]] || \
+    die "--node-port совпадает с HTTPS/xray/SSH-портом ($NODE_PORT)"
+fi
+if [[ -n $PANEL_IP ]]; then
+  [[ $PANEL_IP =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ || $PANEL_IP =~ ^[0-9a-fA-F:]+(/[0-9]{1,3})?$ ]] || \
+    die "--panel-ip: ожидаю IPv4/IPv6 адрес (можно с /маской), получено: $PANEL_IP"
 fi
 
 # Psiphon: новая установка — ставим; уже стоящий vps-psiphon не трогаем (кроме --psiphon); переустановка
